@@ -3,13 +3,13 @@ requires = ["setuptools>64", "wheel", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "usask_arg_example"
+name = "showlib"
 dynamic = ["version"]
-description="usask arg example project"
+description="Research and development libraries developed at the University of Saskatchewan for the SHOW instrument"
 readme = "README.md"
 dependencies = ['numpy']
 authors = [
-    { name = "AUTHOR", email = "AUTHOR@EXAMPLE.com" },
+    { name = "usask-arg developers" },
 ]
 requires-python = ">=3.10"
 classifiers = [

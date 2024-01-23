@@ -7,10 +7,10 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 from __future__ import annotations
 
-project = 'usask_arg_example'
+project = 'showlib'
 copyright = '2024, USask-ARG'
 author = 'USask-ARG'
-github_url = ''
+github_url = 'https://github.com/usask-arg/show-lib'
 
 from importlib.metadata import version as get_version
 

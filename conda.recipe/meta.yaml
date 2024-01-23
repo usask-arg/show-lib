@@ -4,7 +4,7 @@
 {% set py_version = environ['CONDA_PY'] %}
 
 package:
-  name: usask_arg_example
+  name: showlib
   version: {{ version }}
 
 source:
@@ -28,7 +28,7 @@ requirements:
 
 test:
   imports:
-    - usask_arg_example
+    - showlib
   requires:
     - pytest
   source_files:
@@ -37,6 +37,6 @@ test:
     - pytest tests
 
 about:
-  home: HOME_PAGE_URL
-  summary: SUMMARY
+  home: https://github.com/usask-arg/show-lib
+  summary: Research and development libraries for the SHOW instrument
   license_file: ../LICENSE
