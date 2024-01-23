@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import usask_arg_example
+import showlib
 
 
 def test_basic():
-    assert usask_arg_example.do_nothing() == 5
+    assert showlib.do_nothing() == 5
