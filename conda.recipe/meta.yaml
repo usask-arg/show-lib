@@ -25,6 +25,8 @@ requirements:
   run:
     - python {{ python }}
     - numpy
+    - netcdf4
+    - xarray
 
 test:
   imports:
