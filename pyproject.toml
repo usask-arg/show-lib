@@ -7,7 +7,7 @@ name = "showlib"
 dynamic = ["version"]
 description="Research and development libraries developed at the University of Saskatchewan for the SHOW instrument"
 readme = "README.md"
-dependencies = ['numpy']
+dependencies = ['numpy', 'netcdf4', 'xarray']
 authors = [
     { name = "usask-arg developers" },
 ]
