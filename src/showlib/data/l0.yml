@@ -1,0 +1,33 @@
+global:
+  vars:
+    h2o_vmr:
+      coordinates: "altitude x"
+      units: "volume mixing ratio"
+      long_name: "Water Vapor Volume Mixing Ratio"
+      standard_name: ""
+      _FillValue: -9999.0
+      valid_min: 0
+      valid_max: 1.0
+      maturity_level: "Beta"
+
+
+  coords:
+    altitude:
+      units: "m"
+      long_name: "Altitude above the EGM96 surface"
+      standard_name: "altitude"
+      _FillValue: -9999.0
+      valid_min: 0
+      valid_max: 100000
+
+  groups:
+
+  attrs:
+    title: "HAWCSat SHOW Daily Water Vapor"
+    summary: "..."
+    Conventions: "ACDD-1.3"
+    platform: "HAWCSat"
+    instrument: "SHOW"
+    processing_level: "L2"
+    keywords: "limb, water vapor"
+    ShortName: ""
