@@ -25,6 +25,10 @@ requirements:
   run:
     - python {{ python }}
     - numpy
+    - netcdf4
+    - sasktran2
+    - usask-arg-nightly::skretrieval
+    - xarray
 
 test:
   imports:
