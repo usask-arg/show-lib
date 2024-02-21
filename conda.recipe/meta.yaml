@@ -19,15 +19,15 @@ build:
 
 requirements:
   host:
-    - python {{ python }}
+    - python
     - pip
     - setuptools-scm
   run:
-    - python {{ python }}
+    - python
     - numpy
     - netcdf4
     - sasktran2
-    - usask-arg-nightly::skretrieval
+    - skretrieval
     - xarray
 
 test:
