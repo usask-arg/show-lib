@@ -45,10 +45,16 @@ class L2Profile:
         self._ds["latitude"] = latitude
         self._ds["longitude"] = longitude
 
+    @property
+    def ds(self):
+        return self._ds
+
 
 class L2FileWriter:
     def __init__(self, l2_profiles: list[L2Profile]) -> None:
-        self._data = xr.concat(l2_profiles, dim="time")
+        self._data = xr.concat(
+            [l2_profile.ds for l2_profile in l2_profiles], dim="time"
+        )
 
         self._apply_global_attributes()
 

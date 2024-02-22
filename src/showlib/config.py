@@ -13,3 +13,8 @@ def solar_toon_file() -> Path:
 def solar_kurucz_folder() -> Path:
     db_root = sk.appconfig.database_root()
     return db_root.joinpath("solar/kurucz")
+
+
+def ils_folder() -> Path:
+    db_root = sk.appconfig.database_root()
+    return db_root.joinpath("show/ils")

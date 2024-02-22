@@ -10,7 +10,7 @@ from skretrieval.core.radianceformat import RadianceGridded
 from skretrieval.core.sasktranformat import SASKTRANRadiance
 from skretrieval.retrieval import ForwardModel
 
-from showlib.l1b.data import L1bImage
+from showlib.l1b.data import L1bImageBase
 from showlib.l2.solar.model import SHOWSolarModel
 
 from .ancillary import SHOWAncillary
@@ -121,7 +121,7 @@ class SHOWBandModel:
 class SHOWFPForwardModel(ForwardModel):
     def __init__(
         self,
-        l1b: L1bImage,
+        l1b: L1bImageBase,
         ils: xr.Dataset,
         alt_grid: np.array,
         state_vector: SHOWStateVector,
@@ -131,7 +131,7 @@ class SHOWFPForwardModel(ForwardModel):
     ) -> None:
         super().__init__()
 
-        self._l1 = l1b
+        self._l1 = l1b.skretrieval_l1()
         self._state_vector = state_vector
         self._engine_config = engine_config
         self._ancillary = ancillary
@@ -140,9 +140,7 @@ class SHOWFPForwardModel(ForwardModel):
 
         self._model_res = model_res
 
-        self._model_geometry, self._viewing_geo = self._l1.sk2_geometries(
-            self._alt_grid
-        )
+        self._model_geometry, self._viewing_geo = l1b.sk2_geometries(self._alt_grid)
 
         self._model_wavenumber = self._construct_model_wavenumber()
 
@@ -174,7 +172,7 @@ class SHOWFPForwardModel(ForwardModel):
 
         ls = UserLineShape(delta_wvnum, ils, zero_centered=True)
 
-        wvnum = self._l1.ds.wavenumber.to_numpy()
+        wvnum = self._l1.data.wavenumber.to_numpy()
 
         return SHOWBandModel(wvnum, ls)
 
@@ -191,7 +189,7 @@ class SHOWFPForwardModel(ForwardModel):
             coords={"wavelength": sk2_rad["wavelength"].to_numpy()},
         )
 
-        sk2_rad["angle"] = (["los"], self._l1.ds.angles.to_numpy())
+        # sk2_rad["angle"] = (["los"], self._l1.ds.angles.to_numpy())
 
         sk2_rad = self._state_vector.post_process_sk2_radiances(sk2_rad)
 
@@ -199,7 +197,10 @@ class SHOWFPForwardModel(ForwardModel):
 
         l1 = self._inst_model.model_radiance(engine_rad, None)
 
-        l1.data["tangent_altitude"] = (["los"], self._l1.ds.tangent_altitude.to_numpy())
-        l1.data["angle"] = (["los"], self._l1.ds.angles.to_numpy())
+        l1.data["tangent_altitude"] = (
+            ["los"],
+            self._l1.data.tangent_altitude.to_numpy(),
+        )
+        # l1.data["angle"] = (["los"], self._l1.data.angles.to_numpy())
 
         return l1

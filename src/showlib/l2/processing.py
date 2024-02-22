@@ -30,6 +30,7 @@ class SHOWFPRetrieval:
         l1b_image: L1bImageBase,
         ils: xr.Dataset,
         minimizer="rodgers",
+        por_data: xr.Dataset | None = None,
         rodgers_kwargs: dict | None = None,
         scipy_kwargs: dict | None = None,
         target_kwargs: dict | None = None,
@@ -54,6 +55,7 @@ class SHOWFPRetrieval:
             rodgers_kwargs = {}
         self._options = kwargs
         self._l1b = l1b_image
+        self._skl1 = self._l1b.skretrieval_l1()
         self._ils = ils
         self._minimizer = minimizer
         self._rodgers_kwargs = rodgers_kwargs
@@ -61,6 +63,7 @@ class SHOWFPRetrieval:
         self._scipy_kwargs = scipy_kwargs
         self._state_kwargs = state_kwargs
         self._engine_kwargs = engine_kwargs
+        self._por_data = por_data
         self._native_alt_grid = np.unique(
             np.concatenate(
                 (
@@ -291,6 +294,12 @@ class SHOWFPRetrieval:
         )
 
     def _construct_ancillary(self):
+        if self._por_data is not None:
+            return SHOWAncillary(
+                self._por_data["altitude"].to_numpy(),
+                self._por_data["pressure"].to_numpy(),
+                self._por_data["temperature"].to_numpy(),
+            )
         lat = self._l1b.lat
         lon = self._l1b.lon
 
