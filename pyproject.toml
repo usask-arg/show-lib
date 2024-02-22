@@ -7,7 +7,7 @@ name = "showlib"
 dynamic = ["version"]
 description="Research and development libraries developed at the University of Saskatchewan for the SHOW instrument"
 readme = "README.md"
-dependencies = ['numpy', 'netcdf4', 'xarray']
+dependencies = ['numpy', 'netcdf4', 'xarray', 'skretrieval', 'sasktran']
 authors = [
     { name = "usask-arg developers" },
 ]
@@ -24,7 +24,7 @@ classifiers = [
 test = ["pytest"]
 
 [tool.setuptools_scm]
-write_to = "src/_version.py"
+write_to = "src/showlib/_version.py"
 
 [tool.pytest.ini_options]
 minversion = "6.0"

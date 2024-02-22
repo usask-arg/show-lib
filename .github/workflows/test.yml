@@ -66,4 +66,4 @@ jobs:
       - name: Build Conda package
         shell: bash -el {0}
         run: |
-          conda mambabuild conda.recipe --output-folder pkgs/
+          conda mambabuild conda.recipe --output-folder pkgs/ -c usask-arg-nightly
