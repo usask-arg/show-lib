@@ -6,6 +6,7 @@ import numpy as np
 import xarray as xr
 from scipy.interpolate import UnivariateSpline
 from skretrieval.retrieval.statevector import StateVectorElement
+from skretrieval.retrieval.tikhonov import two_dim_vertical_first_deriv
 
 
 class MultiplicativeSpline(StateVectorElement):
@@ -368,11 +369,12 @@ class ScaleFactorsPoly(StateVectorElement):
 
 
 class AddFactors(StateVectorElement):
-    def __init__(self, num_los: int, min_value=-10, max_value=10):
+    def __init__(self, num_los: int, min_value=-10, max_value=10, order=0):
         self._scale = 1e11
-        self._x = np.zeros(num_los)
+        self._x = np.zeros((num_los, order + 1))
         self._min_value = min_value
         self._max_value = max_value
+        self._order = order
         super().__init__(True)
 
     def state(self) -> np.array:
@@ -388,7 +390,8 @@ class AddFactors(StateVectorElement):
         self._x = x.reshape(self._x.shape)
 
     def inverse_apriori_covariance(self) -> np.ndarray:
-        return np.eye(len(self.state())) * 1e-10
+        gamma = two_dim_vertical_first_deriv(1, len(self.state()), factor=100)
+        return gamma.T @ gamma + np.eye(len(self.state())) * 1
 
     def name(self) -> str:
         return "add_factors"
@@ -396,15 +399,18 @@ class AddFactors(StateVectorElement):
     def propagate_wf(self, radiance: xr.Dataset) -> xr.Dataset:
         full_deriv = np.zeros(
             (
-                len(self._x),
+                self._x.shape[0],
+                self._x.shape[1],
                 radiance["radiance"].shape[0],
                 radiance["radiance"].shape[1],
                 radiance["radiance"].shape[2],
             )
         )
+        w = radiance["wavelength"].to_numpy() - radiance["wavelength"].to_numpy()[0]
 
         for i in range(radiance["radiance"].to_numpy().shape[1]):
-            full_deriv[i, :, i, :] = self._scale
+            for o in range(self._order + 1):
+                full_deriv[i, o, :, i, 0] = self._scale * w**o
 
         return xr.DataArray(
             full_deriv.reshape(
@@ -419,9 +425,17 @@ class AddFactors(StateVectorElement):
         )
 
     def modify_input_radiance(self, radiance: xr.Dataset):
-        vals = self._x * self._scale
+        vals = self._x
+        w = radiance["wavelength"].to_numpy() - radiance["wavelength"].to_numpy()[0]
 
-        radiance += xr.DataArray(vals, dims=["los"])
+        mvals = np.zeros((len(w), self._x.shape[0]))
+
+        mvals[:] = vals[:, 0][np.newaxis, :]
+
+        for o in range(1, self._order + 1):
+            mvals += vals[:, o][np.newaxis, :] * (w**o)[:, np.newaxis] * self._scale
+
+        radiance["radiance"] += xr.DataArray(mvals, dims=["wavelength", "los"])
 
         return radiance
 

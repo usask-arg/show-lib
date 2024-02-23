@@ -262,7 +262,7 @@ class SHOWFPRetrieval:
                     s=spline["smoothing"],
                     order=spline["order"],
                 )
-                splines[f"spline_{name}"].enabled = True
+                splines[f"spline_{name}"].enabled = spline.get("enabled", True)
             else:
                 splines[f"spline_{name}"] = MultiplicativeSplineOne(
                     spline["min_wavelength"],
@@ -271,7 +271,7 @@ class SHOWFPRetrieval:
                     s=spline["smoothing"],
                     order=spline["order"],
                 )
-                splines[f"spline_{name}"].enabled = True
+                splines[f"spline_{name}"].enabled = spline.get("enabled", True)
 
         scales = {}
         for name, scale in self._state_kwargs["scale_factors"].items():
@@ -279,13 +279,17 @@ class SHOWFPRetrieval:
                 scales[f"scale_{name}"] = ScaleFactorsPoly(
                     len(self._l1b.ds.los), order=scale["order"]
                 )
+                scales[f"scale_{name}"].enabled = scale.get("enabled", True)
             if scale["type"] == "add":
-                scales[f"add_{name}"] = AddFactors(len(self._l1b.ds.los))
+                scales[f"add_{name}"] = AddFactors(
+                    len(self._l1b.ds.los), order=scale["order"]
+                )
 
         shifts = {}
         for name, shift in self._state_kwargs["shifts"].items():
             if shift["type"] == "wavelength":
                 shifts[f"shift_{name}"] = BandShifts(len(self._l1b.ds.los))
+                shifts[f"shift_{name}"].enabled = shift.get("enabled", True)
             if shift["type"] == "altitude":
                 shifts[f"shift_{name}"] = AltitudeShift()
 

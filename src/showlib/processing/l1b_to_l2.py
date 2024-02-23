@@ -18,9 +18,10 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
     )
 
     l1b_data = L1bDataSet(l1b_file)
+
     por_data = xr.open_dataset(l1b_data.l2_por_path)
 
-    out_file = output_folder.joinpath(l1b_data.l2_path.stem + +".nc")
+    out_file = output_folder.joinpath(l1b_data.l2_path.stem + ".nc")
 
     logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
@@ -42,7 +43,7 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
                 rodgers_kwargs={
                     "lm_damping_method": "fletcher",
                     "lm_damping": 0.1,
-                    "max_iter": 10,
+                    "max_iter": 20,
                     "lm_change_factor": 10,
                     "iterative_update_lm": True,
                     "retreat_lm": True,
@@ -86,6 +87,7 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
                             "smoothing": 0,
                             "order": 2,
                             "type": "global",
+                            "enabled": True,
                         }
                     },
                     "aerosols": {},
@@ -93,9 +95,14 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
                         "los": {
                             "type": "poly",
                             "order": 2,
+                        },
+                    },
+                    "shifts": {
+                        "wavelength": {
+                            "type": "wavelength",
+                            "enabled": True,
                         }
                     },
-                    "shifts": {"wavelength": {"type": "wavelength"}},
                 },
                 engine_kwargs={"num_threads": 8},
             )
