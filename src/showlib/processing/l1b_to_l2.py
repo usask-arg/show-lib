@@ -104,7 +104,7 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
                         }
                     },
                 },
-                engine_kwargs={"num_threads": 8},
+                engine_kwargs={"num_threads": 1},
             )
 
             results = ret.retrieve()
