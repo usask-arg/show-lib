@@ -161,3 +161,4 @@ cython_debug/
 src/showlib/_version.py
 local_scripts
 .vscode/
+snake/
