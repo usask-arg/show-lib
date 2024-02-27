@@ -354,7 +354,7 @@ class SHOWFPRetrieval:
         elif self._minimizer == "scipy_grad":
             minimizer = SciPyMinimizerGrad()
 
-        results = minimizer.retrieve(
+        min_results = minimizer.retrieve(
             self._l1b.skretrieval_l1(), self._forward_model, self._construct_target()
         )
 
@@ -374,6 +374,14 @@ class SHOWFPRetrieval:
             "altitude"
         ] = self._forward_model._atmosphere.model_geometry.altitudes()
 
+        results["retrieved"]["h2o_por"] = self._por_data["h2o_vmr"].interp(
+            altitude=self._native_alt_grid
+        )
+        results["retrieved"]["pressure"] = self._por_data["pressure"].interp(
+            altitude=self._native_alt_grid
+        )
+        results["retrieved"]["tropopause_altitude"] = self._por_data.tropopause_altitude
+
         for name in self._state_kwargs["absorbers"]:
             results["retrieved"][f"{name}_vmr"] = (
                 ("altitude"),
@@ -383,6 +391,35 @@ class SHOWFPRetrieval:
                 ("altitude"),
                 self._forward_model._atmosphere[name]._prior,
             )
+
+        avg_kernel = min_results["averaging_kernel"][
+            : len(self._native_alt_grid), : len(self._native_alt_grid)
+        ]
+
+        results["retrieved"].coords["altitude2"] = results["retrieved"].coords[
+            "altitude"
+        ]
+        results["retrieved"]["averaging_kernel"] = xr.DataArray(
+            avg_kernel, dims=["altitude", "altitude2"]
+        )
+
+        error = (
+            np.sqrt(
+                np.diag(min_results["error_covariance_from_noise"])[
+                    : len(self._native_alt_grid)
+                ]
+            )
+            * results["retrieved"]["h2o_vmr"].to_numpy()
+        )
+
+        results["retrieved"]["h2o_vmr_1sigma"] = xr.DataArray(error, dims=["altitude"])
+
+        results["retrieved"]["tangent_latitude"] = self._l1b.ds.swap_dims(
+            {"los": "tangent_altitude"}
+        ).interp(tangent_altitude=self._native_alt_grid)["tangent_latitude"]
+        results["retrieved"]["tangent_longitude"] = self._l1b.ds.swap_dims(
+            {"los": "tangent_altitude"}
+        ).interp(tangent_altitude=self._native_alt_grid)["tangent_longitude"]
 
         results["retrieved"].coords[
             "albedo_wavelength"

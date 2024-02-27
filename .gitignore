@@ -162,3 +162,4 @@ src/showlib/_version.py
 local_scripts
 .vscode/
 snake/
+*.snakemake*

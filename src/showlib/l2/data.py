@@ -12,6 +12,12 @@ class L2Profile:
         self,
         altitude_m: np.array,
         h2o_vmr: np.array,
+        h2o_vmr_1sigma: np.array,
+        h2o_vmr_prior: np.array,
+        tangent_latitude: np.array,
+        tangent_longitude: np.array,
+        tropopause_altitude: float,
+        averaging_kernel: np.array,
         latitude: float,
         longitude: float,
         time: datetime,
@@ -39,8 +45,21 @@ class L2Profile:
         self._ds = xr.Dataset()
 
         self._ds["h2o_vmr"] = xr.DataArray(h2o_vmr, dims=["altitude"])
+        self._ds["h2o_vmr_1sigma"] = xr.DataArray(h2o_vmr_1sigma, dims=["altitude"])
+        self._ds["h2o_vmr_prior"] = xr.DataArray(h2o_vmr_prior, dims=["altitude"])
+        self._ds["tangent_latitude"] = xr.DataArray(tangent_latitude, dims=["altitude"])
+        self._ds["tangent_longitude"] = xr.DataArray(
+            tangent_longitude, dims=["altitude"]
+        )
+        self._ds["averaging_kernel"] = xr.DataArray(
+            averaging_kernel, dims=["altitude", "altitude2"]
+        )
+
+        self._ds["tropopause_altitude"] = tropopause_altitude
 
         self._ds.coords["altitude"] = altitude_m
+        self._ds.coords["altitude2"] = altitude_m
+
         self._ds.coords["time"] = time
         self._ds["latitude"] = latitude
         self._ds["longitude"] = longitude

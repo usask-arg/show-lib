@@ -1,0 +1,40 @@
+
+
+#rule convert_l1b_to_granules:
+#    input:
+#        raw_l1b="/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight_mls/raw/20231128_science_flight1_l1b_cm_1_north_slice1.nc",
+#        filter="/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight_mls/calibration/fc.nc"
+#    output:
+#        "/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight_mls/l1b"
+#    conda:
+#        "showlib"
+#    script:
+#        "scripts/convert_l1b_to_granules.py"
+
+IDS, = glob_wildcards("l1b/HAWC_H2OL_Radiances_L1B_{granule}.v0_0_1.STD.nc")
+
+# a pseudo-rule that collects the target files
+rule all:
+    input:  expand("l2/HAWC_H2OL_Wvapor_L2_{granule}.v0_0_1.STD.nc", granule=IDS)
+
+rule generate_por:
+    input:
+        "l1b/HAWC_H2OL_Radiances_L1B_{granule}.v0_0_1.STD.nc"
+    output:
+        "por/HAWC_H2OL_Wvapor_L2_POR_{granule}.v0_0_1.STD.nc"
+    conda:
+        "showlib"
+    script:
+        "scripts/generate_por.py"
+
+rule generate_l2:
+    input:
+        "l1b/HAWC_H2OL_Radiances_L1B_{granule}.v0_0_1.STD.nc",
+        "por/HAWC_H2OL_Wvapor_L2_POR_{granule}.v0_0_1.STD.nc",
+        "calibration/ils.nc"
+    output:
+        "l2/HAWC_H2OL_Wvapor_L2_{granule}.v0_0_1.STD.nc"
+    conda:
+        "showlib"
+    script:
+        "scripts/generate_l2.py"

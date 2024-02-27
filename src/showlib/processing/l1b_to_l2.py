@@ -6,16 +6,13 @@ from pathlib import Path
 import xarray as xr
 from skretrieval.util import configure_log
 
-from showlib.config import ils_folder
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.data import L2FileWriter, L2Profile
 from showlib.l2.processing import SHOWFPRetrieval
 
 
-def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
-    ils = xr.open_dataset(
-        ils_folder().joinpath("ils_characterization_hann_2024_02_08.nc")
-    )
+def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
+    ils = xr.open_dataset(ils_path)
 
     l1b_data = L1bDataSet(l1b_file)
 
@@ -43,7 +40,7 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
                 rodgers_kwargs={
                     "lm_damping_method": "fletcher",
                     "lm_damping": 0.1,
-                    "max_iter": 20,
+                    "max_iter": 10,
                     "lm_change_factor": 10,
                     "iterative_update_lm": True,
                     "retreat_lm": True,
@@ -108,12 +105,26 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
             )
 
             results = ret.retrieve()
+
+            lat_15 = float(
+                results["retrieved"]["tangent_latitude"].interp(tangent_altitude=15000)
+            )
+            lon_15 = float(
+                results["retrieved"]["tangent_longitude"].interp(tangent_altitude=15000)
+            )
+
             l2s.append(
                 L2Profile(
                     altitude_m=results["retrieved"].altitude.to_numpy(),
                     h2o_vmr=results["retrieved"].h2o_vmr.to_numpy(),
-                    latitude=l1b_image.lat,
-                    longitude=l1b_image.lon,
+                    h2o_vmr_1sigma=results["retrieved"].h2o_vmr_1sigma.to_numpy(),
+                    h2o_vmr_prior=results["retrieved"].h2o_por.to_numpy(),
+                    tropopause_altitude=float(results["retrieved"].tropopause_altitude),
+                    tangent_latitude=results["retrieved"].tangent_latitude.to_numpy(),
+                    tangent_longitude=results["retrieved"].tangent_longitude.to_numpy(),
+                    averaging_kernel=results["retrieved"].averaging_kernel.to_numpy(),
+                    latitude=lat_15,
+                    longitude=lon_15,
                     time=l1b_image.ds.time,
                 )
             )
@@ -125,14 +136,17 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path):
 if __name__ == "__main__":
     configure_log()
     in_folder = Path(
-        "/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight/l1b_mag/"
+        "/datastore/root/research_projects/SHOW/er2_2023/data/science_flight_1_testing/l1b/"
     )
 
-    for file in in_folder.iterdir():
+    for file in in_folder.glob("HAWC*"):
         if file.suffix == ".nc":
             process_l1b_to_l2(
                 file,
                 Path(
-                    "/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight/l2_mag"
+                    "/datastore/root/research_projects/SHOW/er2_2023/data/science_flight_1_testing/l2/",
+                ),
+                Path(
+                    "/datastore/root/research_projects/SHOW/er2_2023/data/science_flight_1_testing/calibration/ils.nc"
                 ),
             )
