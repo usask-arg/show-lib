@@ -101,7 +101,9 @@ class MERRA2:
                 msg = f"Could not find Merra file for date string {datestr}"
                 raise OSError(msg)
 
-            self._tds = xr.open_dataset(possible_files[0].as_posix()).interp(time=time)
+            self._tds = xr.open_dataset(possible_files[0].as_posix()).interp(
+                time=time, kwargs={"bounds_error": False, "fill_value": "extrapolate"}
+            )
 
         self._ds = self._tds.interp(lat=latitude, lon=longitude)
 
