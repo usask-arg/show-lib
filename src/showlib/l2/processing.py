@@ -255,7 +255,7 @@ class SHOWFPRetrieval:
         for name, spline in self._state_kwargs["splines"].items():
             if spline["type"] == "los":
                 splines[f"spline_{name}"] = MultiplicativeSpline(
-                    len(self._l1b.ds.los),
+                    len(self._l1b.skretrieval_l1().data.los),
                     spline["min_wavelength"],
                     spline["max_wavelength"],
                     spline["num_knots"],
@@ -277,7 +277,7 @@ class SHOWFPRetrieval:
         for name, scale in self._state_kwargs["scale_factors"].items():
             if scale["type"] == "poly":
                 scales[f"scale_{name}"] = ScaleFactorsPoly(
-                    len(self._l1b.ds.los), order=scale["order"]
+                    len(self._l1b.skretrieval_l1().data.los), order=scale["order"]
                 )
                 scales[f"scale_{name}"].enabled = scale.get("enabled", True)
             if scale["type"] == "add":
@@ -288,7 +288,9 @@ class SHOWFPRetrieval:
         shifts = {}
         for name, shift in self._state_kwargs["shifts"].items():
             if shift["type"] == "wavelength":
-                shifts[f"shift_{name}"] = BandShifts(len(self._l1b.ds.los))
+                shifts[f"shift_{name}"] = BandShifts(
+                    len(self._l1b.skretrieval_l1().data.los)
+                )
                 shifts[f"shift_{name}"].enabled = shift.get("enabled", True)
             if shift["type"] == "altitude":
                 shifts[f"shift_{name}"] = AltitudeShift()

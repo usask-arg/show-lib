@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import sasktran2 as sk
 import xarray as xr
 from skretrieval.util import configure_log
 
@@ -22,17 +23,19 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
 
     logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
+    low_alt = 11000
+
     if not out_file.exists():
         l2s = []
         for image in range(len(l1b_data.ds.time)):
-            l1b_image = l1b_data.image(image)
+            l1b_image = l1b_data.image(image, low_alt=low_alt, high_alt=20000)
             por_image = por_data.isel(time=image)
 
             ret = SHOWFPRetrieval(
                 l1b_image,
                 ils,
                 por_data=por_image,
-                low_alt=5000,
+                low_alt=low_alt,
                 minimizer="rodgers",
                 target_kwargs={
                     "rescale_state_space": False,
@@ -101,7 +104,11 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
                         }
                     },
                 },
-                engine_kwargs={"num_threads": 1},
+                engine_kwargs={
+                    "num_threads": 1,
+                    "num_streams": 2,
+                    "multiple_scatter_source": sk.MultipleScatterSource.DiscreteOrdinates,
+                },
             )
 
             results = ret.retrieve()
