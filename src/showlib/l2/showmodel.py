@@ -179,8 +179,10 @@ class SHOWFPForwardModel(ForwardModel):
     def calculate_radiance(self):
         sk2_rad = self._engine.calculate_radiance(self._atmosphere)
 
-        solar_irradiance = self._solar_model.irradiance(
-            sk2_rad["wavelength"], mjd=54372
+        solar_irradiance = (
+            self._solar_model.irradiance(sk2_rad["wavelength"], mjd=54372)
+            * sk2_rad["wavelength"].to_numpy() ** 2
+            / 1e7
         )
 
         sk2_rad *= xr.DataArray(

@@ -31,6 +31,7 @@ class SHOWFPRetrieval:
         ils: xr.Dataset,
         minimizer="rodgers",
         por_data: xr.Dataset | None = None,
+        aero_data: xr.Dataset | None = None,
         rodgers_kwargs: dict | None = None,
         scipy_kwargs: dict | None = None,
         target_kwargs: dict | None = None,
@@ -64,6 +65,7 @@ class SHOWFPRetrieval:
         self._state_kwargs = state_kwargs
         self._engine_kwargs = engine_kwargs
         self._por_data = por_data
+        self._aero_data = aero_data
         self._native_alt_grid = np.unique(
             np.concatenate(
                 (
@@ -305,6 +307,7 @@ class SHOWFPRetrieval:
                 self._por_data["altitude"].to_numpy(),
                 self._por_data["pressure"].to_numpy(),
                 self._por_data["temperature"].to_numpy(),
+                self._aero_data,
             )
         lat = self._l1b.lat
         lon = self._l1b.lon

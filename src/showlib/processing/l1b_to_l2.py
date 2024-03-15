@@ -24,6 +24,13 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
     logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
     low_alt = 11000
+    if (l1b_file.parent.parent / "aux/aerosol.nc").exists():
+        aero = xr.open_dataset(
+            l1b_file.parent.parent / "aux/aerosol.nc", group="retrieved/aerosol"
+        )
+    else:
+        aero = None
+    # aero = None
 
     if not out_file.exists():
         l2s = []
@@ -35,6 +42,7 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
                 l1b_image,
                 ils,
                 por_data=por_image,
+                aero_data=aero,
                 low_alt=low_alt,
                 minimizer="rodgers",
                 target_kwargs={
@@ -105,7 +113,6 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
                     },
                 },
                 engine_kwargs={
-                    "num_threads": 1,
                     "num_streams": 2,
                     "multiple_scatter_source": sk.MultipleScatterSource.DiscreteOrdinates,
                 },
