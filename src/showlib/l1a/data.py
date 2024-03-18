@@ -9,6 +9,7 @@ class L1AImage:
     def __init__(
         self,
         image: np.array,
+        C2: np.array,
         tangent_locations: np.array,
         tangent_longitudes: np.array,
         tangent_latitudes: np.array,
@@ -24,7 +25,7 @@ class L1AImage:
         self._ds = xr.Dataset()
 
         self._ds["image"]   = xr.DataArray(image, dims = ["pixelheight", "pixelcolumn"])
-
+        self._ds["C2"] = xr.DataArray(C2, dims=["los"])
         #Merge the geometry information with the L0 file
         self._ds["tangent_altitude"] = xr.DataArray(tangent_locations, dims=["los"])
         self._ds["tangent_latitude"] = xr.DataArray(tangent_latitudes, dims=["los"])

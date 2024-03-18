@@ -69,9 +69,11 @@ def process_l0_to_l1a(SHOW_l0_file:Path, iWG_file:Path, output_folder:Path):
 
         # flip the images to put the ground at the bottom of the image
         l1a_image = np.flipud(l1a_data["image"].data)
+        C2 = np.flipud(l1a_data["C2"].data)
 
         # Merge the geometry information with the L0 file
         SHOW_l1a_entries.append(L1AImage(image =  l1a_image,
+                                         C2    = C2,
                  tangent_locations = measurement_geometry.tangent_locations,
                  tangent_latitudes= measurement_geometry.tangent_latitudes,
                  tangent_longitudes=measurement_geometry.tangent_longitudes,
