@@ -74,7 +74,7 @@ class SHOWBandModel:
                     "ij,ljk->ikl",
                     self._interpolator,
                     radiance.data[key].isel(stokes=0).to_numpy(),
-                    optimize=True,
+                    optimize="optimal",
                 )
 
                 data[key] = (
@@ -164,7 +164,7 @@ class SHOWFPForwardModel(ForwardModel):
         self._solar_model = SHOWSolarModel()
 
     def _construct_model_wavenumber(self):
-        return np.arange(7295, 7340, self._model_res)
+        return np.arange(7305, 7330, self._model_res)
 
     def _construct_inst_model(self):
         delta_wvnum = self._ils.wavenumbers[90000:110000]
@@ -179,8 +179,10 @@ class SHOWFPForwardModel(ForwardModel):
     def calculate_radiance(self):
         sk2_rad = self._engine.calculate_radiance(self._atmosphere)
 
-        solar_irradiance = self._solar_model.irradiance(
-            sk2_rad["wavelength"], mjd=54372
+        solar_irradiance = (
+            self._solar_model.irradiance(sk2_rad["wavelength"], mjd=54372)
+            * sk2_rad["wavelength"].to_numpy() ** 2
+            / 1e7
         )
 
         sk2_rad *= xr.DataArray(

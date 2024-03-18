@@ -31,6 +31,7 @@ class SHOWFPRetrieval:
         ils: xr.Dataset,
         minimizer="rodgers",
         por_data: xr.Dataset | None = None,
+        aero_data: xr.Dataset | None = None,
         rodgers_kwargs: dict | None = None,
         scipy_kwargs: dict | None = None,
         target_kwargs: dict | None = None,
@@ -64,6 +65,7 @@ class SHOWFPRetrieval:
         self._state_kwargs = state_kwargs
         self._engine_kwargs = engine_kwargs
         self._por_data = por_data
+        self._aero_data = aero_data
         self._native_alt_grid = np.unique(
             np.concatenate(
                 (
@@ -255,7 +257,7 @@ class SHOWFPRetrieval:
         for name, spline in self._state_kwargs["splines"].items():
             if spline["type"] == "los":
                 splines[f"spline_{name}"] = MultiplicativeSpline(
-                    len(self._l1b.ds.los),
+                    len(self._l1b.skretrieval_l1().data.los),
                     spline["min_wavelength"],
                     spline["max_wavelength"],
                     spline["num_knots"],
@@ -277,7 +279,7 @@ class SHOWFPRetrieval:
         for name, scale in self._state_kwargs["scale_factors"].items():
             if scale["type"] == "poly":
                 scales[f"scale_{name}"] = ScaleFactorsPoly(
-                    len(self._l1b.ds.los), order=scale["order"]
+                    len(self._l1b.skretrieval_l1().data.los), order=scale["order"]
                 )
                 scales[f"scale_{name}"].enabled = scale.get("enabled", True)
             if scale["type"] == "add":
@@ -288,7 +290,9 @@ class SHOWFPRetrieval:
         shifts = {}
         for name, shift in self._state_kwargs["shifts"].items():
             if shift["type"] == "wavelength":
-                shifts[f"shift_{name}"] = BandShifts(len(self._l1b.ds.los))
+                shifts[f"shift_{name}"] = BandShifts(
+                    len(self._l1b.skretrieval_l1().data.los)
+                )
                 shifts[f"shift_{name}"].enabled = shift.get("enabled", True)
             if shift["type"] == "altitude":
                 shifts[f"shift_{name}"] = AltitudeShift()
@@ -303,6 +307,7 @@ class SHOWFPRetrieval:
                 self._por_data["altitude"].to_numpy(),
                 self._por_data["pressure"].to_numpy(),
                 self._por_data["temperature"].to_numpy(),
+                self._aero_data,
             )
         lat = self._l1b.lat
         lon = self._l1b.lon
@@ -354,7 +359,7 @@ class SHOWFPRetrieval:
         elif self._minimizer == "scipy_grad":
             minimizer = SciPyMinimizerGrad()
 
-        results = minimizer.retrieve(
+        min_results = minimizer.retrieve(
             self._l1b.skretrieval_l1(), self._forward_model, self._construct_target()
         )
 
@@ -374,6 +379,14 @@ class SHOWFPRetrieval:
             "altitude"
         ] = self._forward_model._atmosphere.model_geometry.altitudes()
 
+        results["retrieved"]["h2o_por"] = self._por_data["h2o_vmr"].interp(
+            altitude=self._native_alt_grid
+        )
+        results["retrieved"]["pressure"] = self._por_data["pressure"].interp(
+            altitude=self._native_alt_grid
+        )
+        results["retrieved"]["tropopause_altitude"] = self._por_data.tropopause_altitude
+
         for name in self._state_kwargs["absorbers"]:
             results["retrieved"][f"{name}_vmr"] = (
                 ("altitude"),
@@ -383,6 +396,35 @@ class SHOWFPRetrieval:
                 ("altitude"),
                 self._forward_model._atmosphere[name]._prior,
             )
+
+        avg_kernel = min_results["averaging_kernel"][
+            : len(self._native_alt_grid), : len(self._native_alt_grid)
+        ]
+
+        results["retrieved"].coords["altitude2"] = results["retrieved"].coords[
+            "altitude"
+        ]
+        results["retrieved"]["averaging_kernel"] = xr.DataArray(
+            avg_kernel, dims=["altitude", "altitude2"]
+        )
+
+        error = (
+            np.sqrt(
+                np.diag(min_results["error_covariance_from_noise"])[
+                    : len(self._native_alt_grid)
+                ]
+            )
+            * results["retrieved"]["h2o_vmr"].to_numpy()
+        )
+
+        results["retrieved"]["h2o_vmr_1sigma"] = xr.DataArray(error, dims=["altitude"])
+
+        results["retrieved"]["tangent_latitude"] = self._l1b.ds.swap_dims(
+            {"los": "tangent_altitude"}
+        ).interp(tangent_altitude=self._native_alt_grid)["tangent_latitude"]
+        results["retrieved"]["tangent_longitude"] = self._l1b.ds.swap_dims(
+            {"los": "tangent_altitude"}
+        ).interp(tangent_altitude=self._native_alt_grid)["tangent_longitude"]
 
         results["retrieved"].coords[
             "albedo_wavelength"

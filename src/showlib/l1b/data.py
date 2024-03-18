@@ -73,8 +73,10 @@ class L1bImage(L1bImageBase):
 
         return cls(ds)
 
-    def __init__(self, ds: xr.Dataset):
+    def __init__(self, ds: xr.Dataset, low_alt=0, high_alt=100000):
         self._ds = ds
+        self._low_alt = low_alt
+        self._high_alt = high_alt
 
     @property
     def ds(self):
@@ -99,13 +101,23 @@ class L1bImage(L1bImageBase):
 
         viewing_geo = sk.ViewingGeometry()
 
-        for i in range(len(self._ds.los)):
+        good_alt = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
+            self._ds.tangent_altitude.to_numpy() < self._high_alt
+        )
+
+        for i in range(len(self._ds.los[good_alt])):
             viewing_geo.add_ray(
                 sk.TangentAltitudeSolar(
-                    self._ds["tangent_altitude"].to_numpy()[i],
-                    np.deg2rad(self._ds["relative_solar_azimuth_angle"].to_numpy()[i]),
+                    self._ds["tangent_altitude"].to_numpy()[good_alt][i],
+                    np.deg2rad(
+                        self._ds["relative_solar_azimuth_angle"].to_numpy()[good_alt][i]
+                    ),
                     float(self._ds["spacecraft_altitude"]),
-                    np.cos(np.deg2rad(self._ds["solar_zenith_angle"].to_numpy()[i])),
+                    np.cos(
+                        np.deg2rad(
+                            self._ds["solar_zenith_angle"].to_numpy()[good_alt][i]
+                        )
+                    ),
                 )
             )
 
@@ -114,19 +126,29 @@ class L1bImage(L1bImageBase):
     def skretrieval_l1(self):
         ds = xr.Dataset()
 
-        ds["radiance"] = xr.DataArray(
-            self._ds["radiance"].to_numpy(), dims=["wavenumber", "los"]
-        )
-        ds["radiance_noise"] = xr.DataArray(
-            self._ds["radiance_noise"].to_numpy(), dims=["wavenumber", "los"]
-        )
-
-        ds["tangent_altitude"] = self._ds["tangent_altitude"]
-        ds.coords["wavenumber"] = (
+        wvnum = (
             self._ds["left_wavenumber"].to_numpy()[0]
             + np.arange(0, len(self._ds.sample))
             * self._ds["wavenumber_spacing"].to_numpy()[0]
         )
+
+        good = (wvnum > 7310) & (wvnum < 7330)
+
+        good_alt = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
+            self._ds.tangent_altitude.to_numpy() < self._high_alt
+        )
+
+        ds["radiance"] = xr.DataArray(
+            self._ds["radiance"].to_numpy()[np.ix_(good, good_alt)],
+            dims=["wavenumber", "los"],
+        )
+        ds["radiance_noise"] = xr.DataArray(
+            self._ds["radiance_noise"].to_numpy()[np.ix_(good, good_alt)],
+            dims=["wavenumber", "los"],
+        )
+
+        ds["tangent_altitude"] = self._ds["tangent_altitude"][good_alt]
+        ds.coords["wavenumber"] = wvnum[good]
 
         return RadianceGridded(ds)
 
@@ -164,9 +186,11 @@ class L1bDataSet:
     def ds(self):
         return self._ds
 
-    def image(self, sample: int, row_reduction: int = 1):
+    def image(self, sample: int, row_reduction: int = 1, low_alt=0, high_alt=100000):
         return L1bImage(
-            self._ds.isel(time=sample).isel(los=slice(None, None, row_reduction))
+            self._ds.isel(time=sample).isel(los=slice(None, None, row_reduction)),
+            low_alt=low_alt,
+            high_alt=high_alt,
         )
 
     @property
