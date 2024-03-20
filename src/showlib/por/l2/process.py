@@ -62,7 +62,7 @@ def l2_por(l1b_granule: Path, out_folder: Path):
         out.to_netcdf(out_file.as_posix())
 
 
-def l2_por_merra(l1b_granule: Path, out_folder: Path):
+def l2_por_merra(l1b_granule: Path, out_folder: Path, merra2_folder: Path):
     """
     Process a single L2 granule and save the results to the out_folder
 
@@ -74,7 +74,7 @@ def l2_por_merra(l1b_granule: Path, out_folder: Path):
     out_folder: Path
         Folder to save the results to
     """
-    merra2 = MERRA2(Path("/home/dannyz/mnts/utls3/MERRA2"))
+    merra2 = MERRA2(merra2_folder)
 
     ds = xr.open_dataset(l1b_granule)
     out_file = out_folder.joinpath(
@@ -155,4 +155,5 @@ if __name__ == "__main__":
                 Path(
                     "/datastore/root/research_projects/SHOW/er2_2023/data/science_flight_1_testing/por/"
                 ),
+                Path("/home/dannyz/mnts/utls3/MERRA2"),
             )
