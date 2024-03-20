@@ -18,7 +18,7 @@ cdb:
     bore_sight_pixel: 320                                          # The height pixel aligned with the bore-sight. 2023 pre-flight calibration measurements.
     height_degrees_per_pixel: -0.012885646639701376              # degrees per pixel positive values are in "up" direction, 2023 pre-flight calibtarion measurements
     boresight_pitchangle: -2.40                                   # Pitch angle in degree of SHOW optical axis to the to aircraft "nose" vector,  +ve value is SHOW pointing upwards.
-    
+
 iFOV:
     Pixel_column_at_left_edge_of_grating_image: 8                                   # Left  edge of useful sub-window, 1 based index, inclusive
     Pixel_column_at_right_edge_of_grating_image: 502                                # Right edge of useful sub-window, 1 based index, inclusive

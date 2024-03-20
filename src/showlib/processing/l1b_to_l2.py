@@ -150,7 +150,7 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
 if __name__ == "__main__":
     configure_log()
     in_folder = Path(
-        "/datastore/root/research_projects/SHOW/er2_2023/data/science_flight_1_testing/l1b/"
+        r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\SDSPipelineTest\L1B"
     )
 
     for file in in_folder.glob("HAWC*"):
@@ -158,9 +158,9 @@ if __name__ == "__main__":
             process_l1b_to_l2(
                 file,
                 Path(
-                    "/datastore/root/research_projects/SHOW/er2_2023/data/science_flight_1_testing/l2/",
+                    r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\SDSPipelineTest\L2",
                 ),
                 Path(
-                    "/datastore/root/research_projects/SHOW/er2_2023/data/science_flight_1_testing/calibration/ils.nc"
+                    r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\SDSPipelineTest\calibration\ils.nc"
                 ),
             )

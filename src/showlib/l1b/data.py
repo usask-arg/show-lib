@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import sasktran2 as sk
+import xarray
 import xarray as xr
 from skretrieval.core.radianceformat import RadianceGridded
 from skretrieval.geodetic import geodetic
@@ -33,10 +34,9 @@ class L1bImageBase(abc.ABC):
         pass
 
 
-class L1bImage(L1bImageBase):
-    @classmethod
-    def from_np_arrays(
-        cls,
+class L1bImage:
+    def __init__(
+        self,
         radiance: np.array,
         radiance_noise: np.array,
         tangent_altitude: np.array,
@@ -50,33 +50,90 @@ class L1bImage(L1bImageBase):
         observer_altitude: float,
         sza: np.array,
         saa: np.array,
+        los_azimuth_angle: np.array,
+        low_alt: float,
+        high_alt: float,
     ):
-        ds = xr.Dataset()
+        self._ds = xr.Dataset()
 
-        ds["radiance"] = xr.DataArray(radiance, dims=["sample", "los"])
-        ds["radiance_noise"] = xr.DataArray(radiance_noise, dims=["sample", "los"])
-        ds["tangent_altitude"] = xr.DataArray(tangent_altitude, dims=["los"])
-        ds["tangent_latitude"] = xr.DataArray(tangent_latitude, dims=["los"])
-        ds["tangent_longitude"] = xr.DataArray(tangent_longitude, dims=["los"])
+        self._ds["radiance"] = xr.DataArray(radiance, dims=["sample", "los"])
+        self._ds["radiance_noise"] = xr.DataArray(
+            radiance_noise, dims=["sample", "los"]
+        )
+        self._ds["tangent_altitude"] = xr.DataArray(tangent_altitude, dims=["los"])
+        self._ds["tangent_latitude"] = xr.DataArray(tangent_latitude, dims=["los"])
+        self._ds["tangent_longitude"] = xr.DataArray(tangent_longitude, dims=["los"])
 
-        ds["time"] = time
+        self._ds["time"] = time
 
-        ds["left_wavenumber"] = xr.DataArray(left_wavenumber, dims=["los"])
-        ds["wavenumber_spacing"] = xr.DataArray(wavenumber_spacing, dims=["los"])
+        self._ds["left_wavenumber"] = xr.DataArray(left_wavenumber, dims=["los"])
+        self._ds["wavenumber_spacing"] = xr.DataArray(wavenumber_spacing, dims=["los"])
 
-        ds["spacecraft_latitude"] = observer_latitude
-        ds["spacecraft_longitude"] = observer_longitude
-        ds["spacecraft_altitude"] = observer_altitude
+        self._ds["spacecraft_latitude"] = observer_latitude
+        self._ds["spacecraft_longitude"] = observer_longitude
+        self._ds["spacecraft_altitude"] = observer_altitude
 
-        ds["solar_zenith_angle"] = xr.DataArray(sza, dims=["los"])
-        ds["relative_solar_azimuth_angle"] = xr.DataArray(saa, dims=["los"])
-
-        return cls(ds)
-
-    def __init__(self, ds: xr.Dataset, low_alt=0, high_alt=100000):
-        self._ds = ds
+        self._ds["solar_zenith_angle"] = xr.DataArray(sza, dims=["los"])
+        self._ds["relative_solar_azimuth_angle"] = xr.DataArray(saa, dims=["los"])
+        self._ds["los_azimuth_angle"] = xarray.DataArray(
+            los_azimuth_angle, dims=["los"]
+        )
         self._low_alt = low_alt
         self._high_alt = high_alt
+
+    @property
+    def ds(self):
+        return self._ds
+
+    # class L1bImage(L1bImageBase):
+    #     @classmethod
+    #     def from_np_arrays(
+    #         cls,
+    #         radiance: np.array,
+    #         radiance_noise: np.array,
+    #         tangent_altitude: np.array,
+    #         tangent_latitude: np.array,
+    #         tangent_longitude: np.array,
+    #         left_wavenumber: np.array,
+    #         wavenumber_spacing: np.array,
+    #         time: datetime,
+    #         observer_latitude: float,
+    #         observer_longitude: float,
+    #         observer_altitude: float,
+    #         sza: np.array,
+    #         saa: np.array,
+    #         low_alt: float,
+    #         high_alt: float,
+    #     ):
+    #         ds = xr.Dataset()
+    #
+    #         ds["radiance"] = xr.DataArray(radiance, dims=["sample", "los"])
+    #         ds["radiance_noise"] = xr.DataArray(radiance_noise, dims=["sample", "los"])
+    #         ds["tangent_altitude"] = xr.DataArray(tangent_altitude, dims=["los"])
+    #         ds["tangent_latitude"] = xr.DataArray(tangent_latitude, dims=["los"])
+    #         ds["tangent_longitude"] = xr.DataArray(tangent_longitude, dims=["los"])
+    #
+    #         ds["time"] = time
+    #
+    #         ds["left_wavenumber"] = xr.DataArray(left_wavenumber, dims=["los"])
+    #         ds["wavenumber_spacing"] = xr.DataArray(wavenumber_spacing, dims=["los"])
+    #
+    #         ds["spacecraft_latitude"] = observer_latitude
+    #         ds["spacecraft_longitude"] = observer_longitude
+    #         ds["spacecraft_altitude"] = observer_altitude
+    #
+    #         ds["solar_zenith_angle"] = xr.DataArray(sza, dims=["los"])
+    #         ds["relative_solar_azimuth_angle"] = xr.DataArray(saa, dims=["los"])
+    #
+    #         self._low_alt = low_alt
+    #         #     self._high_alt = high_alt
+    #
+    #         return cls(ds)
+    #     #
+    #     # def __init__(self, ds: xr.Dataset, low_alt=0, high_alt=100000):
+    #     #     self._ds = ds
+    #     #     self._low_alt = low_alt
+    #     #     self._high_alt = high_alt
 
     @property
     def ds(self):
