@@ -1,0 +1,68 @@
+shsdesign:
+    littrow_angle: 28.503                                         # Littrow angle in degrees
+    grating_groove_density_percm: 7000.0                          # Grating groove density  (lines per cm)
+    num_spectralpixels: 512                                       # Number of pixels in detector in spectral dimension
+    num_heightpixels: 640                                         # Number of pixels in detector in height dimension
+    spectralpixel_width_cms: 0.0015                               # pixel width in cm
+    heightpixel_width_cms: 0.0015                                 # pixel width in cm
+
+level0:
+    format: OWL640                                                 # Level 0 file format used by showapi.level0 module
+
+cdb:
+    nominal_littrow_wavelen_nm: 1363.362028393819                  # Nominal Littrow wavelength in air at 23C
+    optics_magnification: 0.2196762889195097                                   # back end optics magnification determined in the lab
+    electrons_per_DN: 39.6                                         # Nominal electrons per DN on the detector (based upon full well = 650000 equivalent to 16384 DN
+    detector_readout_noise: 150.0                                  # Readout noise in electrons.
+    dn_saturated_value: 16383                                      # Any raw Level 0 pixel greater than or equal to this value is considered saturated and will be set to NaN
+    bore_sight_pixel: 320                                          # The height pixel aligned with the bore-sight. 2023 pre-flight calibration measurements.
+    height_degrees_per_pixel: -0.012885646639701376              # degrees per pixel positive values are in "up" direction, 2023 pre-flight calibtarion measurements
+    boresight_pitchangle: -2.40                                   # Pitch angle in degree of SHOW optical axis to the to aircraft "nose" vector,  +ve value is SHOW pointing upwards.
+
+iFOV:
+    Pixel_column_at_left_edge_of_grating_image: 8                                   # Left  edge of useful sub-window, 1 based index, inclusive
+    Pixel_column_at_right_edge_of_grating_image: 502                                # Right edge of useful sub-window, 1 based index, inclusive
+    Pixel_row_at_bottom_of_atmospheric_image: 187                                   # bottom edge of useful sub-window, 1 based index, inclusive
+    Pixel_row_at_top_edge_of_atmospheric_image: 502                                # top    edge of useful sub-window, 1 based index, inclusive
+    Number_of_rows_on_detector: 640                                                 # Number of height rows on detector, should be same as [shsdesign][num_heightpixels]
+    Number_of_columns_on_detector: 512                                              # Number of interferogram columns on detcetor. Should be same as [shsdesign][num_spectralpixels]
+    Centre_pixel_column_corresponding_to_x=0_in_the_grating_localization_plane: 247
+    Centre_pixel_in_vertical-spatial_dimension: 149
+    Pixel_row_at_bottom_edge_of_dark_current_area_below_image_area: 8
+    0_pixel_row_at_top_edge_of_dark_current_area_below_image_area: 128
+    hfov: 5         # [deg]  horizontal field of view  #
+
+
+badpixels:                                                        # Bad pixels.
+   small:                                                         # small -> list of one pixel hot spots (ix,iy) in a 1 based index (i.e. from Matlab)
+      - [36,  206]
+      - [45,  437]
+      - [75,  485]
+      - [77,  407]
+      - [106, 214]
+      - [107, 376]
+      - [107, 427]
+      - [123, 420]
+      - [144, 272]
+      - [145, 470]
+      - [179, 450]
+      - [184, 423]
+      - [193, 494]
+      - [218, 473]
+      - [223, 377]
+      - [225, 311]
+      - [264, 316]
+      - [270, 457]
+      - [305, 345]
+      - [309, 355]
+      - [357, 483]
+      - [376, 220]
+      - [402, 459]
+      - [410, 427]
+      - [481, 323]
+
+   big:                                                        # Large, multi-point hot spots [ix0,ix1,iy0,iy1] define a fully inclusive 1 based indexing rectangle . Hots spots occur from ix0 to ix1 inclusive and from iy0 to iy1 inclusive
+      - [263, 266, 384, 388]
+
+   Calibration:
+     cal_file:
