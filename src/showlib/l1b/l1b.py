@@ -291,7 +291,6 @@ class get_phase_corrected_spectrum:
 
     def process_signal(self, signal: np.ndarray) -> np.ndarray:
         iGM_cor = signal["image"].data
-        iGM_flat = []
         CorSpec = []
         wavnums_list = []
         corrected_spectrum = 0
