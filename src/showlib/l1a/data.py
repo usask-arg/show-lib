@@ -23,6 +23,9 @@ class L1AImage:
         relative_solar_azimuth_angle: np.array,
         los_azimuth_angle: np.array,
         time: datetime,
+        filter_shape: np.array,
+        abs_cal: float,
+        pixel_response: np.array,
     ):
         self._ds = xr.Dataset()
 
@@ -43,6 +46,9 @@ class L1AImage:
         )
         self._ds["los_azimuth_angle"] = xr.DataArray(los_azimuth_angle, dims=["los"])
         self._ds["time"] = time
+        self._ds["filter_shape"] = filter_shape
+        self._ds["pixel_response"] = pixel_response
+        self._ds["abs_cal"] = abs_cal
 
     @property
     def ds(self):

@@ -29,9 +29,7 @@ def er2_attitude(show_utc, filename):
     return observer, aircraft_orientation
 
 
-def geometry_setup(
-    shs_config, show_utc_time, observer=None, aircraft_orientation=None
-):
+def geometry_setup(shs_config, show_utc_time, observer=None, aircraft_orientation=None):
     #######################################################Get the sampling information###########################################
     if aircraft_orientation is None:
         aircraft_orientation = [45, 0, 0]
@@ -46,10 +44,10 @@ def geometry_setup(
 
 def set_measurement_config(
     utc=None,
-    iWGnc_filename=r"\\datastore\valhalla\root\arg_measurements\SHOW\2023_HAWC-ER2_Palmdale\attitude\iwg1-50hz-27Nov2023-2214.nc",
+    iWGnc_filename=None,
 ):
     # SHS configuration
-    shs_config = specs(littrow_nm=1e7 / (7334.808944166525), M=0.2196762889195097)
+    shs_config = specs()
 
     measurement_config_utc = utc
     er2 = er2_attitude(measurement_config_utc, iWGnc_filename)
@@ -62,7 +60,9 @@ def set_measurement_config(
     return measurement_geometry, shs_config
 
 
-def process_l0_to_l1a(SHOW_l0_file: Path, iWG_file: Path, output_folder: Path):
+def process_l0_to_l1a(
+    SHOW_l0_file: Path, iWG_file: Path, Cal_file: Path, output_folder: Path
+):
     # Open the data file
     SHOW_data = xr.open_dataset(SHOW_l0_file)
     output_file = output_folder.joinpath(
@@ -92,6 +92,16 @@ def process_l0_to_l1a(SHOW_l0_file: Path, iWG_file: Path, output_folder: Path):
         C2 = np.flipud(l1a_data["C2"].data)
         noise = np.flipud(l1a_data["error"].data)
 
+        # Calibration data
+        calibration_data = xr.open_dataset(Cal_file)
+        filter_shape = np.interp(
+            shs_config.wav_num[0:247],
+            calibration_data.wavenumbers.data,
+            calibration_data.filter_shape.data,
+        )
+        abs_cal = 0.475 * calibration_data.abscal.data
+        pixel_response = shs_config.pixel_response[0:247]
+
         # Merge the geometry information with the L0 file
         SHOW_l1a_entries.append(
             L1AImage(
@@ -108,6 +118,9 @@ def process_l0_to_l1a(SHOW_l0_file: Path, iWG_file: Path, output_folder: Path):
                 relative_solar_azimuth_angle=measurement_geometry.saa,
                 los_azimuth_angle=measurement_geometry.los_azimuth,
                 time=time,
+                filter_shape=filter_shape,
+                abs_cal=abs_cal,
+                pixel_response=pixel_response,
             )
         )
 
@@ -129,7 +142,12 @@ if __name__ == "__main__":
         r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\iwg1-50hz-27Nov2023-2214.nc"
     )
 
+    # calibration file
+    cal_file = Path(
+        r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\show-lib\CalibrationData\SHOW_ER2_abscal_2024_02_08_v0.2.nc"
+    )
+
     # proc_l0_to_l1a()
     for file in in_folder.glob("HAWC*"):
         if file.suffix == ".nc":
-            process_l0_to_l1a(file, iWG_file, output_folder)
+            process_l0_to_l1a(file, iWG_file, cal_file, output_folder)

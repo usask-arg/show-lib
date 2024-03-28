@@ -24,7 +24,7 @@ def process_l1a_to_l1b(SHOW_l1a_file: Path, output_folder: Path):
 
         # Set the Level 1B processing options
         processing_steps = {
-            "DC_Filter": True,
+            "DC_Filter": False,
             "apply_phase_correction": True,
             "apply_apodization": True,
             "apply_finite_pixel_correction": True,
@@ -33,7 +33,7 @@ def process_l1a_to_l1b(SHOW_l1a_file: Path, output_folder: Path):
         }
 
         # SHS configuration
-        shs_config = specs(littrow_nm=1e7 / (7334.808944166525), M=0.2196762889195097)
+        shs_config = specs()
 
         # set up the L1B processor
         L1B_process = l1b(processing_steps=processing_steps, specs=shs_config)
@@ -60,8 +60,6 @@ def process_l1a_to_l1b(SHOW_l1a_file: Path, output_folder: Path):
                 saa=l1a_ds["relative_solar_azimuth_angle"].data,
                 los_azimuth_angle=l1a_ds["los_azimuth_angle"].data,
                 time=l1a_ds["time"].data,
-                low_alt=11000,
-                high_alt=20000,
             )
         )
 

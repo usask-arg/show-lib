@@ -35,12 +35,10 @@ class apodization:
         return wavenumber_interpolator
 
     def _construct_wavnum_interpolation(self, center_wavenumber, hires_wavenumber):
-        return self._construct_wavnum_interpolator(
-            center_wavenumber, hires_wavenumber
-        )
-
+        return self._construct_wavnum_interpolator(center_wavenumber, hires_wavenumber)
 
     def process_signal(self, signal):
+        data_image = signal["spectrum"].data
         # convolve he apodization function with the input signal
         apo = self.apodization_function()
         self.apodization_lineshape = UserLineShape(apo[0], apo[1], zero_centered=True)
@@ -48,14 +46,17 @@ class apodization:
         # set the shs spectral sampling
         # Set up the wavelength interpolator
         wavel_interp = []
-        for s in self.specs.wav_num[0 : np.shape(signal)[1]]:
+        for s in self.specs.wav_num[0 : np.shape(data_image)[1]]:
             interp_vals = self._construct_wavnum_interpolation(
-                s, self.specs.wav_num[0 : np.shape(signal)[1]]
+                s, self.specs.wav_num[0 : np.shape(data_image)[1]]
             )
             wavel_interp.append(interp_vals)
 
         wavel_interp = np.array(wavel_interp)
-        return np.einsum("ij,jk...", signal, wavel_interp[:, 0, :].T)
+        signal["spectrum"].data = np.einsum(
+            "ij,jk...", data_image, wavel_interp[:, 0, :].T
+        )
+        return signal
 
 
 class shs_spectrum:
@@ -66,7 +67,6 @@ class shs_spectrum:
     def process_signal(self, signal):
         """ "Take the FFT and generate the power spectrum (abs(iFFT(signal))"""
         data = np.pad(signal, self.pad_factor * 100)
-        N = np.shape(data)[1]
         x = np.fft.ifft(np.fft.ifftshift(data))
         s = np.fft.fftshift(x)
         return np.abs(s[:, 0 : int(self.specs.DetNumPixX / 2)])
@@ -87,14 +87,9 @@ class spectral_response_correction:
         self.specs = specs
 
     def process_signal(self, signal: np.ndarray) -> np.ndarray:
-        # TODO: this will need to be optimized for each flight since the filter shifts with temperature.
-        filter_response = np.interp(
-            self.specs.wav_num[0:247],
-            self.specs.wav_num[0:247] + 0.7,
-            self.specs.spectral_response,
-        )
-
-        return signal / filter_response
+        # TODO: this will need t o be optimized for each flight since the filter shifts with temperature.
+        signal["spectrum"].data = signal["spectrum"].data / signal["filter_shape"].data
+        return signal
 
 
 class pixel_response_correction:
@@ -105,7 +100,10 @@ class pixel_response_correction:
         self.specs = specs
 
     def process_signal(self, signal: np.ndarray) -> np.ndarray:
-        return signal / self.specs.pixel_response[0 : int(self.specs.DetNumPixX / 2)]
+        signal["spectrum"].data = (
+            signal["spectrum"].data / signal["pixel_response"].data
+        )
+        return signal
 
 
 class abscal:
@@ -116,7 +114,8 @@ class abscal:
         self.specs = specs
 
     def process_signal(self, signal: np.ndarray) -> np.ndarray:
-        return signal * self.specs.abs_cal
+        signal["spectrum"].data = signal["spectrum"].data * signal["abs_cal"].data
+        return signal
 
 
 class L1A_DC_Filter:
@@ -130,13 +129,14 @@ class L1A_DC_Filter:
         return (0.5 * (1 + np.cos(np.pi * f / s))) ** N
 
     def process_signal(self, signal: np.ndarray) -> np.ndarray:
+        data_image = signal["image"].data
         # Remove nans if they are still present
-        signal[np.isnan(signal)] = 1
+        data_image[np.isnan(data_image)] = 1
 
-        iGM_fft = np.fft.rfft(signal, axis=1)
+        iGM_fft = np.fft.rfft(data_image, axis=1)
 
         F = np.zeros_like(iGM_fft[0, :])
-        fx = np.fft.rfftfreq(np.shape(signal)[1], d=0.0015)
+        fx = np.fft.rfftfreq(np.shape(data_image)[1], d=0.0015)
         s = 230
         f = fx[fx < s]
 
@@ -155,9 +155,9 @@ class L1A_DC_Filter:
 
         iGM_filt = np.fft.irfft(S_filt)
         scale = iGM_filt[:, 248]
-        dc_correction = scale * (signal / iGM_filt).T
-
-        return (dc_correction - np.mean(dc_correction, axis=0)).T
+        dc_correction = scale * (data_image / iGM_filt).T
+        signal["image"].data = (dc_correction - np.mean(dc_correction, axis=0)).T
+        return signal
 
 
 class get_phase_corrected_spectrum:
@@ -180,6 +180,8 @@ class get_phase_corrected_spectrum:
             np.imag(S_meas) * np.cos(a[0] * (-freq + kL) + a[1])
             + np.real(S_meas) * np.sin(a[0] * (-freq + kL) + a[1])
         )
+        # b = a[1]/kL + a[0]
+        # return np.abs(np.imag(S_meas*np.exp(1j*(-a[0]*freq + a[0]*kL  + a[1]))))
 
     def phase(self, signal, freq, deg):
         return np.polyfit(freq[:], np.unwrap(np.angle(signal[:])), deg=deg)
@@ -258,10 +260,12 @@ class get_phase_corrected_spectrum:
 
         lstsq_fit = least_squares(
             self.minfunc,
-            (1e-5, 1),
+            (1e-05, 1),
             args=(fx[120:160], iGM_fft_center[120:160]),
             method="lm",
         )
+
+        wav_cor = (fx + kL) / (8 * np.pi * np.tan(self.specs.ThetaL))
 
         corrected_spectrum = (
             iGM_fft_center
@@ -275,7 +279,7 @@ class get_phase_corrected_spectrum:
             corrected_spectrum = corrected_spectrum * np.exp(1j * np.pi)
 
         # interpolate to a fixed wavenumber grid
-        wav_cor = (fx + kL) / (8 * np.pi * np.tan(self.specs.ThetaL))
+
         corrected_spectrum_fixed = np.interp(
             self.specs.wav_num, wav_cor, corrected_spectrum
         )
@@ -286,7 +290,7 @@ class get_phase_corrected_spectrum:
         )
 
     def process_signal(self, signal: np.ndarray) -> np.ndarray:
-        iGM_cor = signal
+        iGM_cor = signal["image"].data
         iGM_flat = []
         CorSpec = []
         wavnums_list = []
@@ -296,14 +300,12 @@ class get_phase_corrected_spectrum:
             try:
                 corrected_spectrum, wavnums = self.phase_correction(iGM_cor[i, :])
 
-            except:
-                flat = np.nan * iGM_cor[i, :]
-                iGM_flat.append(iGM_cor[i, :] - flat)
+            except ValueError:
                 corrected_spectrum = corrected_spectrum * np.nan
             CorSpec.append(corrected_spectrum)
             wavnums_list.append(wavnums)
         spectrum = np.reshape(
             np.concatenate(CorSpec), (len(CorSpec), np.shape(CorSpec[0])[0])
         ).T
-
-        return spectrum.T
+        signal["spectrum"] = xr.DataArray(spectrum.T, dims=["los", "wavenumber"])
+        return signal

@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import sasktran as sk
 from astropy.coordinates import AltAz, EarthLocation, get_sun
 from astropy.time import Time
 from sasktran import LineOfSight
 from skretrieval.core import OpticalGeometry
-
-# from skplatform import Platform
 from skretrieval.platforms import Platform
-
-# from arg_time import ut_to_datetime64
 from skretrieval.time import ut_to_datetime64
 from skretrieval.util import rotation_matrix
 
@@ -21,19 +16,6 @@ class ER2Platform:
         self.__verbose__ = True
         self.specs = shs_config
         self.vertical_sampling = self.specs.DetNumPixY
-
-    # def load_saved_data(self, csv_filename = r'C:\Users\jeffl\SHOWER2Sim\show-er-simulator\showretrieval\Support_Libraries\Platform\2017_ScienceFlight.csv'):
-    #
-    #     path = csv_filename
-    #
-    #     data = pd.read_csv(path,
-    #                        index_col=0,
-    #                        usecols=[1, 2, 3, 4, 8, 13, 14, 16, 17],
-    #                        names=['time', 'latitude', 'longitude', 'altitude', 'speed', 'heading', 'track',
-    #                               'pitch_angle', 'roll_angle'],
-    #                        parse_dates=True, skiprows=700).to_xarray().sortby('time')
-    #     data = data.where(np.isfinite(data.latitude) & np.isfinite(data.roll_angle), drop=True)
-    #     return data
 
     def make_ER2_geometry(
         self,
@@ -51,8 +33,7 @@ class ER2Platform:
         self.observer_latitude = observer[0]
         self.observer_longitude = observer[1]
         self.observer_altitude = observer[2]
-        utc = utc
-        observer = observer
+
         self.hfov = self.specs.hfov
         self.vfov = self.specs.vfov
 
@@ -122,8 +103,6 @@ class ER2Platform:
             observer = [80, 235, 600000]
         if utc is None:
             utc = ["2020-07-15T15:00:00.0000000"]
-        utc = utc
-        observer = observer
         self.hfov = self.specs.hfov
         self.vfov = self.specs.vfov
 
@@ -147,18 +126,12 @@ class ER2Platform:
             self.measurement_geometry(self.optical_axis)[0].tangent_location().altitude
         )
 
-
     def generate_SHOW_vertical_image(self, optical_axis, vertical_sampling):
         """Takes in the optical axis Optical Geometry, vertical sampling and the vertical field of view and generates
         the instrument lines of sight in the vertical dimension"""
-
         geo = sk.Geometry()
-
         # Get the sensor FOV
         vert_fov = self.vfov * np.pi / 180
-
-        # Set the vertical sampling across the vertical FOV based off the specified high res sampling
-        vert_sampling = vertical_sampling
 
         # define the local up for the central tangent
         local_up = optical_axis.local_up
@@ -168,9 +141,7 @@ class ER2Platform:
         central_los = optical_axis.look_vector
         central_los = central_los / np.linalg.norm(central_los)
 
-        vert_fov = vert_fov
         model_angles = np.linspace(-vert_fov / 2, vert_fov / 2, vertical_sampling)
-        vert_angular_spacing = np.mean(np.diff(model_angles))
 
         # For each model angle rotate the central los to obtain the corresponding los in the vertical image
         rot_axis = np.cross(central_los, local_up)
@@ -201,12 +172,11 @@ class ER2Platform:
 
     def calc_tangents(self, los_optical_geometry: OpticalGeometry):
         tangent_locations = []
-        observer_distance = []
         for meas in los_optical_geometry:
             line_of_sight = self.measurement_geometry(meas)
             try:
                 tangent_locations.append(line_of_sight[0].tangent_location().altitude)
-            except:
+            except AttributeError:
                 tangent_locations.append(0)
 
         return np.array(tangent_locations)
@@ -217,7 +187,7 @@ class ER2Platform:
             line_of_sight = self.measurement_geometry(meas)
             try:
                 lats.append(line_of_sight[0].tangent_location().latitude)
-            except:
+            except AttributeError:
                 lats.append(0)
         return np.array(lats)
 
@@ -227,7 +197,7 @@ class ER2Platform:
             line_of_sight = self.measurement_geometry(meas)
             try:
                 lons.append(line_of_sight[0].tangent_location().latitude)
-            except:
+            except AttributeError:
                 lons.append(0)
         return np.array(lons)
 
@@ -240,7 +210,7 @@ class ER2Platform:
                 los_azimuth.append(
                     np.arccos(np.dot(line_of_sight[0].look_vector, north))
                 )
-            except:
+            except AttributeError:
                 los_azimuth.append(0)
         return np.array(los_azimuth)
 
@@ -255,7 +225,7 @@ class ER2Platform:
                         - line_of_sight[0].observer
                     )
                 )
-            except:
+            except AttributeError:
                 observer_distance.append(0)
 
         return np.array(observer_distance)

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import numpy as np
-import xarray as xr
 import yaml
 
 
@@ -14,40 +14,24 @@ class SHOW_specs:
 
     """
 
-    def __init__(self, littrow_nm=1363.38, M=0.21910042822432865, vac=False):
+    def __init__(self, vac=False):
         # Littrow given in air. wavenumber scale and Littrow will be converterd to vacuuum if vac = True
-        real_path = os.path.realpath(__file__)
-        folder = real_path + r"\.."
-        filename = folder + r"\er2_2023.yaml"
+
+        real_path = Path(os.path.realpath(__file__))
+        filename = real_path.parents[1] / r"Specifications\er2_2023.yaml"
         self.vac = vac
 
-        with open(filename) as stream:
-            try:
-                shs_specs_dict = yaml.full_load(stream)["shsdesign"]
+        with Path.open(filename) as stream:
+            shs_specs_dict = yaml.full_load(stream)["shsdesign"]
 
-            except:
-                shs_specs_dict = yaml.load(stream)["shsdesign"]
+        with Path.open(filename) as stream:
+            cbd_dict = yaml.full_load(stream)["cdb"]
 
-        with open(filename) as stream:
-            try:
-                cbd_dict = yaml.full_load(stream)["cdb"]
+        with Path.open(filename) as stream:
+            iFOV_dict = yaml.full_load(stream)["iFOV"]
 
-            except:
-                cbd_dict = yaml.load(stream)["cdb"]
-
-        with open(filename) as stream:
-            try:
-                iFOV_dict = yaml.full_load(stream)["iFOV"]
-
-            except:
-                iFOV_dict = yaml.load(stream)["iFOV"]
-
-        with open(filename) as stream:
-            try:
-                bad_pixels_dict = yaml.full_load(stream)["badpixels"]
-
-            except:
-                bad_pixels_dict = yaml.load(stream)["badpixels"]
+        with Path.open(filename) as stream:
+            bad_pixels_dict = yaml.full_load(stream)["badpixels"]
 
         # Add all parameters to the design specifications:
         self.design = shs_specs_dict
@@ -111,8 +95,8 @@ class SHOW_specs:
         ]
 
         # Magnification
-        self.Magnification = M
-        self.Littrow = 1e7 / littrow_nm
+        self.Magnification = self.design["optics_magnification"]
+        self.Littrow = 1e7 / self.design["nominal_littrow_wavelen_nm"]
 
         # Littrow wavenumber
         self.SigmaL = self.Littrow  # [cm^-1]
@@ -159,9 +143,8 @@ class SHOW_specs:
         self.__SHS_optical_path__()
         self.__SHS_wavels__()
         self.__finite_pixel_response__()
-        # self.__materion_filter__()
-        self.__filter_correction__()
         self.__analytic_ILS__()
+        self.__dust_offset_pixels__()
 
     def vac_to_air_wavels_nm(self, wavels_nm):
         wavels_um = wavels_nm * 1e-3
@@ -279,40 +262,115 @@ class SHOW_specs:
             / self.Magnification
         )
 
-    def __materion_filter__(self):
-        path = r"C:\Users\jeffl\SHOWER2_2023\data\materion_transmission_profiles.txt"
+    def __dust_offset_pixels__(self):
+        dust_mask = np.ones((self.DetNumPixY, self.DetNumPixX))
+        # These pixeld were identified in the L1B as either dust or bad pixels.
 
-        trans = np.flip(np.loadtxt(path)[:, 1] / 100)
-        full_trans = np.flip(np.loadtxt(path)[:, 1::] / 100)
-        # The SHOW materion filter was designed with a center wavelength of 1366.86 nm. However, characterization measurements performed at DRDC suggest that the center
-        # is shifted down by 0.3 nm to 1366.56 nm
-        wav_filter = np.flip(1e7 / (np.loadtxt(path)[:, 0]))
-
-        self.trans_filter = np.interp(self.wav_num, wav_filter, trans)
-        self.materion_transmittance = []
-        for i in range(np.shape(full_trans)[1]):
-            self.materion_transmittance.append(
-                np.interp(self.wav_num, wav_filter, full_trans[:, i])
-            )
-
-    def __filter_correction__(self):
-        real_path = os.path.realpath(__file__)
-        folder = real_path + r"\.."
-        path_abscal = folder + r"\SHOW_ER2_abscal_2024_02_08_v0.2.nc"
-        abscal_data = xr.open_dataset(path_abscal)
-
-        # path = r'show_example_for_zawada.nc'
-        # filter_cor = xr.open_dataset(path)
-        # self.spectral_response_wavenumbers = self.wav_num[0:247]
-        # self.spectral_response = np.interp(self.wav_num[0:247], filter_cor.wavelength.data, filter_cor.filter_correction.data)
-        self.spectral_response_wavenumbers = self.wav_num[0:247]
-        self.spectral_response = np.interp(
-            self.wav_num[0:247],
-            abscal_data.wavenumbers.data,
-            abscal_data.filter_shape.data,
+        p = (
+            [206, 92],
+            [154, 294],
+            [154, 295],
+            [155, 295],
+            [114, 155],
+            [129, 199],
+            [133, 200],
+            [108, 53],
+            [108, 51],
+            [76, 88],
+            [31, 56],
+            [129, 199],
+            [133, 200],
+            [27, 226],
+            [24, 225],
+            [209, 25],
+            [180, 51],
+            [44, 3],
+            [146, 25],
+            [90, 170],
+            [85, 174],
+            [41, 185],
+            [45, 186],
+            [150, 174],
+            [129, 199],
+            [130, 199],
+            [172, 301],
+            [81, 320],
+            [184, 417],
+            [113, 368],
+            [113, 369],
+            [80, 363],
+            [80, 364],
+            [74, 372],
+            [83, 364],
+            [105, 439],
+            [190, 330],
+            [6, 420],
+            [180, 51],
+            [181, 51],
+            [12, 434],
+            [178, 286],
+            [249, 6],
+            [302, 66],
+            [35, 109],
+            [74, 11],
+            [78, 11],
+            [35, 286],
+            [25, 438],
+            [271, 336],
+            [11, 78],
+            [35, 107],
+            [274, 178],
+            [269, 196],
+            [238, 130],
+            [219, 292],
+            [96, 444],
+            [154, 436],
+            [194, 273],
+            [167, 328],
+            [156, 80],
+            [61, 188],
+            [296, 363],
+            [296, 452],
+            [155, 148],
+            [76, 113],
+            [91, 127],
+            [7, 328],
+            [225, 233],
+            [187, 493],
+            [187, 77],
+            [137, 244],
+            [214, 101],
         )
 
-        self.abs_cal = 0.475 * abscal_data.abscal.data
+        # bigger dust particles
+        pb1 = [197, 199, 143, 146]
+        pb2 = [201, 202, 145, 147]
+        pb3 = [206, 208, 3, 4]
+        pb4 = [110, 112, 154, 155]
+        pb5 = [157, 159, 295, 298]
+        pb6 = [49, 51, 385, 388]
+        pb7 = [52, 54, 386, 389]
+        pb8 = [119, 121, 455, 457]
+        pb9 = [122, 125, 456, 458]
+        pb10 = [224, 231, 16, 20]
+
+        for i in range(len(p)):
+            dust_mask[tuple(p[i])] = np.nan
+
+        dust_mask[180, 253] = np.nan
+        dust_mask[172, :] = np.nan
+        dust_mask[pb1[0] : pb1[1], pb1[2] : pb1[3]] = np.nan
+        dust_mask[pb2[0] : pb2[1], pb2[2] : pb2[3]] = np.nan
+        dust_mask[pb3[0] : pb3[1], pb3[2] : pb3[3]] = np.nan
+        dust_mask[pb4[0] : pb4[1], pb4[2] : pb4[3]] = np.nan
+        dust_mask[pb5[0] : pb5[1], pb5[2] : pb5[3]] = np.nan
+        dust_mask[pb6[0] : pb6[1], pb6[2] : pb6[3]] = np.nan
+        dust_mask[pb7[0] : pb7[1], pb7[2] : pb7[3]] = np.nan
+        dust_mask[pb8[0] : pb8[1], pb8[2] : pb8[3]] = np.nan
+        dust_mask[pb9[0] : pb9[1], pb9[2] : pb9[3]] = np.nan
+        dust_mask[pb10[0] : pb10[1], pb10[2] : pb10[3]] = np.nan
+
+        self.dust_mask = dust_mask
 
     def air_wavelength_to_vacuum_wavelength(self, wavelength_nm: np.array) -> np.array:
         """
@@ -363,8 +421,3 @@ class SHOW_specs:
         )
 
         return wavelength_nm / n
-
-
-if __name__ == "__main__":
-    specs = SHOW_specs()
-    print("done")

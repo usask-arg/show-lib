@@ -28,7 +28,15 @@ class level1B_processing:
         :param pad_factor:
         """
         if processing_steps is None:
-            processing_steps = {"apply_phase_correction": False, "apply_filter_correction": False, "apply_apodization": False, "remove_bad_pixels": False, "DC_Filter": False, "apply_finite_pixel_correction": False, "apply_abscal": False}
+            processing_steps = {
+                "apply_phase_correction": False,
+                "apply_filter_correction": False,
+                "apply_apodization": False,
+                "remove_bad_pixels": False,
+                "DC_Filter": False,
+                "apply_finite_pixel_correction": False,
+                "apply_abscal": False,
+            }
         self.specs = specs
         self.L1B_options = processing_steps
         self.steps_applied = []
@@ -88,11 +96,12 @@ class level1B_processing:
         self._level1_data_SNR_processing[name] = processor
 
     def process_signal(self, l1a_ds):
+        signal = l1a_ds.copy(deep=True)
         # add back on the C2 DC bias term
-        signal = (l1a_ds["image"].data.T + l1a_ds["C2"].data).T
-
-        # extract the iGM DN/s noise
-        noise = l1a_ds["noise"].data
+        if self.L1B_options["DC_Filter"] is True:
+            signal["image"].data = (l1a_ds["image"].data.T + l1a_ds["C2"].data).T
+        else:
+            signal["image"].data = l1a_ds["image"].data
 
         process_array = []
         for _name, processor in self._level1_data_processing.items():
@@ -104,23 +113,29 @@ class level1B_processing:
         # Calculate the SNR from the phase corrected
         # smooth the standard deviation in the height dimension - there are residual biases in the presence of noise
         STD_NOISE = gaussian_filter1d(
-            np.std(np.imag(unfiltered_signal[:, 100:180]), axis=1), 5
+            np.std(np.imag(unfiltered_signal["spectrum"][:, 100:180]), axis=1), 5
         )
-        SNR = np.real(unfiltered_signal.T) / STD_NOISE
-        radiance_noise = unfiltered_signal.T / SNR
+        SNR = np.real(unfiltered_signal["spectrum"].T) / STD_NOISE
+        radiance_noise = np.real(unfiltered_signal["spectrum"].data.T) / SNR
 
         return xr.Dataset(
             {
-                "radiance": (["wavenumber", "los"], np.real(signal.T)),
-                "radiance_noise": (["wavenumber", "los"], np.real(radiance_noise)),
-                "SNR": (["wavenumber", "los"], SNR),
+                "radiance": (["wavenumber", "los"], np.real(signal["spectrum"].data.T)),
+                "radiance_noise": (["wavenumber", "los"], np.real(radiance_noise.data)),
+                "SNR": (["wavenumber", "los"], SNR.data),
             },
             coords={"wavenumber": self.specs.wav_num[0:247]},
         )
 
     def process_SNR_signal(self, l1a_ds):
-        signal = (l1a_ds["image"].data.T + l1a_ds["C2"].data).T
+        signal = l1a_ds.copy(deep=True)
+        # add back on the C2 DC bias term
+        if self.L1B_options["DC_Filter"] is True:
+            signal["image"].data = (l1a_ds["image"].data.T + l1a_ds["C2"].data).T
+        else:
+            signal["image"].data = l1a_ds["image"].data
         process_array = []
+
         for _name, processor in self._level1_data_SNR_processing.items():
             signal = processor.process_signal(signal)
             process_array.append(signal)
