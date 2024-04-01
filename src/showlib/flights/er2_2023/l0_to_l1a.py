@@ -7,7 +7,6 @@ import xarray as xr
 from skretrieval.util import configure_log
 
 from showlib.flights.er2_2023.l1a.data import L1AFileWriter, L1AImage
-from showlib.flights.er2_2023.l1a.l1a_processing import level1A_processing as l1a
 from showlib.flights.er2_2023.Platform.ER2Platform import ER2Platform as er2
 from showlib.flights.er2_2023.Specifications.shower2_specs import SHOW_specs as specs
 
@@ -85,7 +84,7 @@ def process_l0_to_l1a(
         # l1a_processor = l1a(shs_config)
 
         # process the entry
-        #l1a_data = l1a_processor.process_signal(ds)
+        # l1a_data = l1a_processor.process_signal(ds)
 
         # flip the images to put the ground at the bottom of the image
         l1a_image = np.flipud(ds["image"].data)

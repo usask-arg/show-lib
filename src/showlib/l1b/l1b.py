@@ -6,8 +6,6 @@ from scipy.optimize import least_squares
 from skretrieval.core.lineshape import UserLineShape
 
 
-
-
 class bad_pixel_removal:
     """
     Used to correct bad pixels"""

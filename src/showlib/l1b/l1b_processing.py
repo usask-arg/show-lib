@@ -8,9 +8,11 @@ from scipy.ndimage import gaussian_filter1d
 
 from .l1b import L1A_DC_Filter as DC_filter
 from .l1b import abscal, apodization, get_phase_corrected_spectrum
+from .l1b import bad_pixel_removal as Bad_Pixel
 from .l1b import pixel_response_correction as pixel_response
 from .l1b import spectral_response_correction as spectral_response
-from .l1b import bad_pixel_removal as Bad_Pixel
+
+
 class level1B_processing:
     """
     Implements Level 1B processing of SHOW interferogram images
