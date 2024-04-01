@@ -10,8 +10,7 @@ from .l1b import L1A_DC_Filter as DC_filter
 from .l1b import abscal, apodization, get_phase_corrected_spectrum
 from .l1b import pixel_response_correction as pixel_response
 from .l1b import spectral_response_correction as spectral_response
-
-
+from .l1b import bad_pixel_removal as Bad_Pixel
 class level1B_processing:
     """
     Implements Level 1B processing of SHOW interferogram images
@@ -47,13 +46,16 @@ class level1B_processing:
 
     def __create_L1_processors__(self):
         """Creates a L1 processing element"""
+        if self.L1B_options["remove_bad_pixels"] is True:
+            self.add_component(Bad_Pixel(self.specs), "bad_pixels")
+            self.steps_applied.append("Bad_Pixel")
 
         if self.L1B_options["DC_Filter"] is True:
             self.add_component(DC_filter(self.specs), "DC")
             self.steps_applied.append("DC_Filter")
 
         if self.L1B_options["apply_phase_correction"] is True:
-            self.add_component(get_phase_corrected_spectrum(self.specs), "fft")
+            self.add_component(get_phase_corrected_spectrum(self.specs), "fft_phase")
             self.steps_applied.append("phase_correction")
 
         if self.L1B_options["apply_filter_correction"] is True:

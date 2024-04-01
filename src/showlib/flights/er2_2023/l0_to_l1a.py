@@ -82,15 +82,15 @@ def process_l0_to_l1a(
         )
 
         # Define the l1a processor
-        l1a_processor = l1a(shs_config)
+        # l1a_processor = l1a(shs_config)
 
         # process the entry
-        l1a_data = l1a_processor.process_signal(ds)
+        #l1a_data = l1a_processor.process_signal(ds)
 
         # flip the images to put the ground at the bottom of the image
-        l1a_image = np.flipud(l1a_data["image"].data)
-        C2 = np.flipud(l1a_data["C2"].data)
-        noise = np.flipud(l1a_data["error"].data)
+        l1a_image = np.flipud(ds["image"].data)
+        C2 = np.flipud(ds["C2"].data)
+        noise = np.flipud(ds["error"].data)
 
         # Calibration data
         calibration_data = xr.open_dataset(Cal_file)
