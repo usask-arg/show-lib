@@ -8,8 +8,8 @@ from skretrieval.util import configure_log
 
 from showlib.flights.er2_2023.Platform.ER2Platform import ER2Platform as er2
 from showlib.flights.er2_2023.Specifications.shower2_specs import SHOW_specs as specs
-from showlib.l1a.data import L1AFileWriter, L1AImage
-from showlib.l1a.l1a_processing import level1A_processing as l1a
+from showlib.flights.er2_2023.l1a.data import L1AFileWriter, L1AImage
+from showlib.flights.er2_2023.l1a.l1a_processing import level1A_processing as l1a
 
 
 def er2_attitude(show_utc, filename):
