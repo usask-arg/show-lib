@@ -10,33 +10,8 @@ class bad_pixel_removal:
     """
     Used to correct bad pixels"""
 
-    def __init__(self, specs):
-        self.specs = specs
-
-    #
-    def dead_pixels(self, image):
-        ix0 = self.specs.ImageEdgeLeft
-        iy0 = self.specs.ImageEdgeBottom
-        for p in self.specs.BadPixelsSmall:
-            # place nans at the bad pixel locations
-            px = p[0] - ix0 - 1
-            py = p[1] - iy0 - 1
-            image[py, px] = np.nan
-
-        image[
-            self.specs.BadPixelsBig[0][2]
-            - iy0
-            - 1 : self.specs.BadPixelsBig[0][3]
-            - iy0
-            - 1,
-            self.specs.BadPixelsBig[0][0]
-            - ix0
-            - 1 : self.specs.BadPixelsBig[0][1]
-            - ix0
-            - 1,
-        ] = np.nan
-        image[np.where(image == 16383)] = np.nan
-        return image
+    def __init__(self, mode="linear"):
+        self.mode = mode
 
     def interp_bad_pixels(self, image):
         """
@@ -45,12 +20,7 @@ class bad_pixel_removal:
         :return: output image with bad pixels interpolated
 
         """
-        # image = self.nan_bad_pixels(image)
-        # apply after identifying the dead/bad pixels
-        image = self.dust_offset_pixels(image)
-        image = self.dead_pixels(image)
 
-        image[np.where(image == 16383)] = np.nan
         for i in range(np.shape(image)[1]):
             # get indices of nans
             index = np.where(np.isnan(image[:, i]))
@@ -65,9 +35,6 @@ class bad_pixel_removal:
             image[:, 0] = image[:, 1]
         return image
 
-    def dust_offset_pixels(self, image):
-        return self.specs.dust_mask * image
-
     def process_signal(self, signal: np.ndarray) -> np.ndarray:
         """
         Process the signal
@@ -75,17 +42,21 @@ class bad_pixel_removal:
         :return: processed output signal
         """
 
-        return self.interp_bad_pixels(signal)
+        signal["image"].data = self.interp_bad_pixels(
+            signal["image"].data * signal["bad_pixel_map"].data
+        )
+
+        return signal
 
 
 class apodization:
-    def __init__(self, specs):
-        self.specs = specs
+    def __init__(self):
+        self.specs = []
 
     def apodization_function(self, type="hanning"):
         if type == "hanning":
-            L = self.specs.max_opd
-            sample_spacing = np.mean(np.diff(self.specs.wav_num))
+            L = self.specs["max_opd"]
+            sample_spacing = np.mean(np.diff(self.specs["wav_num"]))
             centered_wavenumbers = np.arange(
                 -10, 10 + sample_spacing / 10, sample_spacing / 10
             )
@@ -111,6 +82,10 @@ class apodization:
 
     def process_signal(self, signal):
         data_image = signal["spectrum"].data
+        specs = {}
+        specs["max_opd"] = np.max(signal["opd_x"].data)
+        specs["wav_num"] = signal["wavenumbers"].data
+        self.specs = specs
         # convolve he apodization function with the input signal
         apo = self.apodization_function()
         self.apodization_lineshape = UserLineShape(apo[0], apo[1], zero_centered=True)
@@ -118,10 +93,8 @@ class apodization:
         # set the shs spectral sampling
         # Set up the wavelength interpolator
         wavel_interp = []
-        for s in self.specs.wav_num[0 : np.shape(data_image)[1]]:
-            interp_vals = self._construct_wavnum_interpolation(
-                s, self.specs.wav_num[0 : np.shape(data_image)[1]]
-            )
+        for s in self.specs["wav_num"]:
+            interp_vals = self._construct_wavnum_interpolation(s, self.specs["wav_num"])
             wavel_interp.append(interp_vals)
 
         wavel_interp = np.array(wavel_interp)
@@ -155,11 +128,12 @@ class spectral_response_correction:
 
     """Removes the spectral response using the correction obtained from the lab characterization."""
 
-    def __init__(self, specs):
-        self.specs = specs
+    def __init__(self):
+        self.filter_shape = []
 
-    def process_signal(self, signal: np.ndarray) -> np.ndarray:
+    def process_signal(self, signal):
         # TODO: this will need t o be optimized for each flight since the filter shifts with temperature.
+        self.filter_shape = signal["filter_shape"].data
         signal["spectrum"].data = signal["spectrum"].data / signal["filter_shape"].data
         return signal
 
@@ -168,10 +142,11 @@ class pixel_response_correction:
 
     """Removes the spectral response using the correction obtained from the lab characterization."""
 
-    def __init__(self, specs):
-        self.specs = specs
+    def __init__(self):
+        self.pixel_response = []
 
-    def process_signal(self, signal: np.ndarray) -> np.ndarray:
+    def process_signal(self, signal):
+        self.pixel_response = signal["pixel_response"].data
         signal["spectrum"].data = (
             signal["spectrum"].data / signal["pixel_response"].data
         )
@@ -182,20 +157,21 @@ class abscal:
 
     """Removes the spectral response using the correction obtained from the lab characterization."""
 
-    def __init__(self, specs):
-        self.specs = specs
+    def __init__(self):
+        self.abs_cal = []
 
-    def process_signal(self, signal: np.ndarray) -> np.ndarray:
+    def process_signal(self, signal):
+        self.abs_cal = signal["abs_cal"].data
         signal["spectrum"].data = signal["spectrum"].data * signal["abs_cal"].data
         return signal
 
 
-class L1A_DC_Filter:
+class DC_Filter:
 
     """Removes the DC component assuming that there are potential low frequency brightness fluctuations in the interferograms"""
 
-    def __init__(self, specs):
-        self.specs = specs
+    def __init__(self):
+        self.dc_filter = []
 
     def dc_filt_func(self, f, s, N=4):
         return (0.5 * (1 + np.cos(np.pi * f / s))) ** N
@@ -223,6 +199,9 @@ class L1A_DC_Filter:
             pixelcolumn=5, center=True, min_periods=1
         ).mean()
 
+        # store the dc filter
+        self.dc_filter = interf_filter.data
+
         S_filt = interf_filter.data * iGM_fft
 
         iGM_filt = np.fft.irfft(S_filt)
@@ -236,9 +215,9 @@ class get_phase_corrected_spectrum:
 
     """Removes the spectral response using the correction obtained from the lab characterization."""
 
-    def __init__(self, specs):
-        self.specs = specs
-        self.wavelengths = self.specs.spectrum_wavelengths
+    def __init__(self):
+        self.wavelengths = []
+        self.specs = []
 
     def box_car(self, N, w, c):
         box = np.zeros(N)
@@ -246,8 +225,8 @@ class get_phase_corrected_spectrum:
         return box
 
     def minfunc(self, a, freq, S_meas):
-        wavL = self.specs.Littrow
-        kL = 8 * np.pi * np.tan(self.specs.ThetaL) * wavL
+        wavL = self.specs["Littrow"]
+        kL = 8 * np.pi * np.tan(self.specs["ThetaL"]) * wavL
         return np.abs(
             np.imag(S_meas) * np.cos(a[0] * (-freq + kL) + a[1])
             + np.real(S_meas) * np.sin(a[0] * (-freq + kL) + a[1])
@@ -316,7 +295,7 @@ class get_phase_corrected_spectrum:
 
             igms.append(iGM_padded)
             iGM_fft, f_fft = self.get_full_spectrum(
-                np.mean(np.diff(self.specs.opd_x)), data=iGM_padded[0], pad_factor=0
+                self.specs["opd_spacing"], data=iGM_padded[0], pad_factor=0
             )
             d.append(np.mean(np.diff(np.unwrap(np.angle(iGM_fft[100:160])))))
             phase.append(np.unwrap(np.angle(iGM_fft[100:160])))
@@ -325,10 +304,10 @@ class get_phase_corrected_spectrum:
         idx_center = np.argmin(np.abs(d))
         iGM_fft_center = fft[idx_center]
         n = len(iGM_fft_center)
-        fx = (2 * np.pi / (n * np.mean(np.diff(self.specs.pos_x)))) * np.arange(
+        fx = (2 * np.pi / (n * np.mean(np.diff(self.specs["pos_x"])))) * np.arange(
             -(n - 1) / 2, (n - 1) / 2 + 1
         )
-        kL = 8 * np.pi * np.tan(self.specs.ThetaL) * self.specs.Littrow
+        kL = 8 * np.pi * np.tan(self.specs["ThetaL"]) * self.specs["Littrow"]
 
         lstsq_fit = least_squares(
             self.minfunc,
@@ -337,7 +316,7 @@ class get_phase_corrected_spectrum:
             method="lm",
         )
 
-        wav_cor = (fx + kL) / (8 * np.pi * np.tan(self.specs.ThetaL))
+        wav_cor = (fx + kL) / (8 * np.pi * np.tan(self.specs["ThetaL"]))
 
         corrected_spectrum = (
             iGM_fft_center
@@ -353,16 +332,23 @@ class get_phase_corrected_spectrum:
         # interpolate to a fixed wavenumber grid
 
         corrected_spectrum_fixed = np.interp(
-            self.specs.wav_num, wav_cor, corrected_spectrum
+            self.specs["wav_num"], wav_cor, corrected_spectrum
         )
 
-        return (
-            corrected_spectrum_fixed[0 : int(self.specs.DetNumPixX / 2)],
-            self.specs.wav_num[0 : int(self.specs.DetNumPixX / 2)],
-        )
+        return (corrected_spectrum_fixed, self.specs["wav_num"])
 
-    def process_signal(self, signal: np.ndarray) -> np.ndarray:
+    def process_signal(self, signal):
         iGM_cor = signal["image"].data
+
+        specs = {}
+        specs["DetNumPixX"] = len(signal["pixelcolumn"].data)
+        specs["Littrow"] = signal["Littrow"].data
+        specs["ThetaL"] = signal["ThetaL"].data
+        specs["opd_spacing"] = np.mean(np.diff(signal["opd_x"].data))
+        specs["pos_x"] = signal["pos_x"].data
+        specs["wav_num"] = signal["wavenumbers"].data
+        self.specs = specs
+
         CorSpec = []
         wavnums_list = []
         corrected_spectrum = 0
@@ -372,7 +358,7 @@ class get_phase_corrected_spectrum:
                 corrected_spectrum, wavnums = self.phase_correction(iGM_cor[i, :])
 
             except ValueError:
-                corrected_spectrum = corrected_spectrum * np.nan
+                corrected_spectrum = np.ones_like(specs["wav_num"]) * np.nan
             CorSpec.append(corrected_spectrum)
             wavnums_list.append(wavnums)
         spectrum = np.reshape(

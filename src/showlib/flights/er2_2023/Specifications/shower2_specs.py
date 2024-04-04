@@ -144,7 +144,11 @@ class SHOW_specs:
         self.__SHS_wavels__()
         self.__finite_pixel_response__()
         self.__analytic_ILS__()
+
+        # create the bad pixel map
         self.__dust_offset_pixels__()
+        self.__dead_pixels__()
+        self.bad_pixel_map = self.dead_pixel_image * self.dust_mask
 
     def vac_to_air_wavels_nm(self, wavels_nm):
         wavels_um = wavels_nm * 1e-3
@@ -252,6 +256,7 @@ class SHOW_specs:
             self.wav_num = np.flip(1e7 / self.spectrum_wavelengths)
         self.wavenumber_spacing = np.mean(np.diff(self.wav_num))
         self.opd_delta = delta
+        self.wavenumbers = self.wav_num[0 : int(self.DetNumPixX / 2)]
 
     def __finite_pixel_response__(self):
         self.pixel_response = np.sinc(
@@ -264,7 +269,7 @@ class SHOW_specs:
 
     def __dust_offset_pixels__(self):
         dust_mask = np.ones((self.DetNumPixY, self.DetNumPixX))
-        # These pixeld were identified in the L1B as either dust or bad pixels.
+        # These pixel were identified in the L1B as either dust or bad pixels.
 
         p = (
             [206, 92],
@@ -371,6 +376,24 @@ class SHOW_specs:
         dust_mask[pb10[0] : pb10[1], pb10[2] : pb10[3]] = np.nan
 
         self.dust_mask = dust_mask
+
+    def __dead_pixels__(self):
+        image = np.ones((self.DetNumPixY, self.DetNumPixX))
+        ix0 = self.ImageEdgeLeft
+        iy0 = self.ImageEdgeBottom
+        for p in self.BadPixelsSmall:
+            # place nans at the bad pixel locations
+            px = p[0] - ix0 - 1
+            py = p[1] - iy0 - 1
+            image[py, px] = np.nan
+
+        image[
+            self.BadPixelsBig[0][2] - iy0 - 1 : self.BadPixelsBig[0][3] - iy0 - 1,
+            self.BadPixelsBig[0][0] - ix0 - 1 : self.BadPixelsBig[0][1] - ix0 - 1,
+        ] = np.nan
+        image[np.where(image == 16383)] = np.nan
+
+        self.dead_pixel_image = image
 
     def air_wavelength_to_vacuum_wavelength(self, wavelength_nm: np.array) -> np.array:
         """

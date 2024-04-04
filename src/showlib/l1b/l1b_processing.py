@@ -6,7 +6,7 @@ import numpy as np
 import xarray as xr
 from scipy.ndimage import gaussian_filter1d
 
-from .l1b import L1A_DC_Filter as DC_filter
+from .l1b import DC_Filter as DC_filter
 from .l1b import abscal, apodization, get_phase_corrected_spectrum
 from .l1b import bad_pixel_removal as Bad_Pixel
 from .l1b import pixel_response_correction as pixel_response
@@ -20,7 +20,6 @@ class level1B_processing:
 
     def __init__(
         self,
-        specs,
         processing_steps=None,
     ):
         """
@@ -38,9 +37,9 @@ class level1B_processing:
                 "apply_finite_pixel_correction": False,
                 "apply_abscal": False,
             }
-        self.specs = specs
         self.L1B_options = processing_steps
         self.steps_applied = []
+        self.SNR_steps_applied = []
         self._level1_data_processing = OrderedDict()
         self._level1_data_SNR_processing = OrderedDict()
         self.__create_L1_processors__()
@@ -49,47 +48,51 @@ class level1B_processing:
     def __create_L1_processors__(self):
         """Creates a L1 processing element"""
         if self.L1B_options["remove_bad_pixels"] is True:
-            self.add_component(Bad_Pixel(self.specs), "bad_pixels")
+            self.add_component(Bad_Pixel(), "bad_pixels")
             self.steps_applied.append("Bad_Pixel")
 
         if self.L1B_options["DC_Filter"] is True:
-            self.add_component(DC_filter(self.specs), "DC")
+            self.add_component(DC_filter(), "DC")
             self.steps_applied.append("DC_Filter")
 
         if self.L1B_options["apply_phase_correction"] is True:
-            self.add_component(get_phase_corrected_spectrum(self.specs), "fft_phase")
+            self.add_component(get_phase_corrected_spectrum(), "fft_phase")
             self.steps_applied.append("phase_correction")
 
         if self.L1B_options["apply_filter_correction"] is True:
-            self.add_component(spectral_response(self.specs), "spectral_response")
+            self.add_component(spectral_response(), "spectral_response")
             self.steps_applied.append("filter_spectral_response")
 
         if self.L1B_options["apply_finite_pixel_correction"] is True:
-            self.add_component(pixel_response(self.specs), "pixel_response")
+            self.add_component(pixel_response(), "pixel_response")
             self.steps_applied.append("finite_pixel_response")
 
         if self.L1B_options["apply_abscal"] is True:
-            self.add_component(abscal(self.specs), "abscal")
+            self.add_component(abscal(), "abscal")
             self.steps_applied.append("abscal")
 
         if self.L1B_options["apply_apodization"] is True:
-            self.add_component(apodization(self.specs), "apodization")
+            self.add_component(apodization(), "apodization")
             self.steps_applied.append("apodization")
 
     def __create_L1_SNR_processors__(self):
         """Creates a L1 processing element"""
 
+        if self.L1B_options["remove_bad_pixels"] is True:
+            self.add_SNR_component(Bad_Pixel(), "bad_pixels")
+            self.SNR_steps_applied.append("Bad_Pixel")
+
         if self.L1B_options["DC_Filter"] is True:
-            self.add_SNR_component(DC_filter(self.specs), "DC")
-            self.steps_applied.append("DC_Filter")
+            self.add_SNR_component(DC_filter(), "DC")
+            self.SNR_steps_applied.append("DC_Filter")
 
         if self.L1B_options["apply_phase_correction"] is True:
-            self.add_SNR_component(get_phase_corrected_spectrum(self.specs), "fft")
-            self.steps_applied.append("phase_correction")
+            self.add_SNR_component(get_phase_corrected_spectrum(), "fft")
+            self.SNR_steps_applied.append("phase_correction")
 
         if self.L1B_options["apply_apodization"] is True:
-            self.add_SNR_component(apodization(self.specs), "apodization")
-            self.steps_applied.append("apodization")
+            self.add_SNR_component(apodization(), "apodization")
+            self.SNR_steps_applied.append("apodization")
 
     def add_component(self, processor, name):
         """Adds a component to the processor"""
@@ -117,7 +120,7 @@ class level1B_processing:
         # Calculate the SNR from the phase corrected
         # smooth the standard deviation in the height dimension - there are residual biases in the presence of noise
         STD_NOISE = gaussian_filter1d(
-            np.std(np.imag(unfiltered_signal["spectrum"][:, 100:180]), axis=1), 5
+            np.nanstd(np.imag(unfiltered_signal["spectrum"][:, 100:180]), axis=1), 5
         )
         SNR = np.real(unfiltered_signal["spectrum"].T) / STD_NOISE
         radiance_noise = np.real(unfiltered_signal["spectrum"].data.T) / SNR
@@ -128,7 +131,7 @@ class level1B_processing:
                 "radiance_noise": (["wavenumber", "los"], np.real(radiance_noise.data)),
                 "SNR": (["wavenumber", "los"], SNR.data),
             },
-            coords={"wavenumber": self.specs.wav_num[0:247]},
+            coords={"wavenumbers": l1a_ds.wavenumbers},
         )
 
     def process_SNR_signal(self, l1a_ds):

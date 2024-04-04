@@ -6,7 +6,6 @@ import numpy as np
 import xarray as xr
 from skretrieval.util import configure_log
 
-from showlib.flights.er2_2023.Specifications.shower2_specs import SHOW_specs as specs
 from showlib.l1b.data import L1bFileWriter, L1bImage
 from showlib.l1b.l1b_processing import level1B_processing as l1b
 
@@ -24,7 +23,7 @@ def process_l1a_to_l1b(SHOW_l1a_file: Path, output_folder: Path):
 
         # Set the Level 1B processing options
         processing_steps = {
-            "Bad_Pixel": True,
+            "remove_bad_pixels": True,
             "DC_Filter": False,
             "apply_phase_correction": True,
             "apply_apodization": True,
@@ -33,23 +32,20 @@ def process_l1a_to_l1b(SHOW_l1a_file: Path, output_folder: Path):
             "apply_abscal": True,
         }
 
-        # SHS configuration
-        shs_config = specs()
-
         # set up the L1B processor
-        L1B_process = l1b(processing_steps=processing_steps, specs=shs_config)
+        L1B_process = l1b(processing_steps=processing_steps)
 
         # Level 1A to Level 1B
         l1b_data = L1B_process.process_signal(l1a_ds)
 
         # Merge the geometry information with the L0 file
         SHOW_l1b_entries.append(
-            L1bImage(
+            L1bImage.from_np_arrays(
                 radiance=l1b_data["radiance"].data,
                 radiance_noise=l1b_data["radiance_noise"].data,
-                wavenumber_spacing=shs_config.wavenumber_spacing
+                wavenumber_spacing=l1a_ds.wavenumber_spacing.data
                 * np.ones_like(l1a_ds["tangent_altitude"].data),
-                left_wavenumber=shs_config.wav_num[0]
+                left_wavenumber=l1a_ds.wavenumbers.data[0]
                 * np.ones_like(l1a_ds["tangent_altitude"].data),
                 tangent_altitude=l1a_ds["tangent_altitude"].data,
                 tangent_latitude=l1a_ds["tangent_latitude"].data,

@@ -120,6 +120,14 @@ def process_l0_to_l1a(
                 filter_shape=filter_shape,
                 abs_cal=abs_cal,
                 pixel_response=pixel_response,
+                wavenumbers=shs_config.wavenumbers,
+                bad_pixel_map=shs_config.bad_pixel_map,
+                wavenumber_spacing=shs_config.wavenumber_spacing,
+                Littrow=shs_config.Littrow,
+                ThetaL=shs_config.ThetaL,
+                opd_x=shs_config.opd_x,
+                pos_x=shs_config.pos_x,
+                pos_y=shs_config.pos_y,
             )
         )
 

@@ -26,6 +26,14 @@ class L1AImage:
         filter_shape: np.array,
         abs_cal: float,
         pixel_response: np.array,
+        bad_pixel_map: np.array,
+        wavenumbers: np.array,
+        wavenumber_spacing: float,
+        Littrow: float,
+        ThetaL: float,
+        opd_x: np.array,
+        pos_x: np.array,
+        pos_y: np.array,
     ):
         self._ds = xr.Dataset()
 
@@ -49,6 +57,16 @@ class L1AImage:
         self._ds["filter_shape"] = filter_shape
         self._ds["pixel_response"] = pixel_response
         self._ds["abs_cal"] = abs_cal
+        self._ds["wavenumbers"] = wavenumbers
+        self._ds["bad_pixel_map"] = xr.DataArray(
+            bad_pixel_map, dims=["pixelheight", "pixelcolumn"]
+        )
+        self._ds["wavenumber_spacing"] = wavenumber_spacing
+        self._ds["Littrow"] = Littrow
+        self._ds["ThetaL"] = ThetaL
+        self._ds["opd_x"] = opd_x
+        self._ds["pos_x"] = pos_x
+        self._ds["pos_y"] = pos_y
 
     @property
     def ds(self):
