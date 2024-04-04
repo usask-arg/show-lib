@@ -140,9 +140,16 @@ class SHOW_specs:
         self.min_wavel = 1e7 / (self.SigmaL + self.DSigma)
         self.max_wavel = 1e7 / (self.SigmaL - self.DSigma)
 
+        # SHS OPD
         self.__SHS_optical_path__()
+
+        # spectral range
         self.__SHS_wavels__()
+
+        # pixel response
         self.__finite_pixel_response__()
+
+        # ils
         self.__analytic_ILS__()
 
         # create the bad pixel map

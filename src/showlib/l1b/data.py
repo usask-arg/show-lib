@@ -50,7 +50,7 @@ class L1bImage(L1bImageBase):
         observer_altitude: float,
         sza: np.array,
         saa: np.array,
-        los_azimuth_angle:np.array,
+        los_azimuth_angle: np.array,
     ):
         ds = xr.Dataset()
 
