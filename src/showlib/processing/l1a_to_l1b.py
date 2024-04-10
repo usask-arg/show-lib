@@ -24,7 +24,7 @@ def process_l1a_to_l1b(SHOW_l1a_file: Path, output_folder: Path):
         # Set the Level 1B processing options
         processing_steps = {
             "remove_bad_pixels": True,
-            "DC_Filter": False,
+            "DC_Filter": True,
             "apply_phase_correction": True,
             "apply_apodization": True,
             "apply_finite_pixel_correction": True,

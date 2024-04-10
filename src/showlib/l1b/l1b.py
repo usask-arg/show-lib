@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 from scipy.optimize import least_squares
+from scipy.signal import resample
 from skretrieval.core.lineshape import UserLineShape
 
 
@@ -43,7 +44,7 @@ class bad_pixel_removal:
         """
 
         signal["image"].data = self.interp_bad_pixels(
-            signal["image"].data * signal["bad_pixel_map"].data
+            signal["image"].data * np.flipud(signal["bad_pixel_map"].data)
         )
 
         return signal
@@ -205,9 +206,20 @@ class DC_Filter:
         S_filt = interf_filter.data * iGM_fft
 
         iGM_filt = np.fft.irfft(S_filt)
-        scale = iGM_filt[:, 248]
-        dc_correction = scale * (data_image / iGM_filt).T
-        signal["image"].data = (dc_correction - np.mean(dc_correction, axis=0)).T
+
+        grid = np.arange(0, len(signal["pixelcolumn"].data))
+        zpd_signal = []
+        for i in range(len(signal["pixelheight"].data)):
+            resampled_igm, resampled_grid = resample(
+                iGM_filt[i, :], 1000 * len(grid), t=grid
+            )
+            zpd_signal.append(
+                np.interp(signal["zpd"].data, resampled_grid, resampled_igm)
+            )
+
+        dc_correction = np.array(zpd_signal) * (data_image / iGM_filt).T
+        image_cor = (dc_correction - np.mean(dc_correction, axis=0)).T
+        signal["image"].data = image_cor
         return signal
 
 
@@ -297,8 +309,11 @@ class get_phase_corrected_spectrum:
             iGM_fft, f_fft = self.get_full_spectrum(
                 self.specs["opd_spacing"], data=iGM_padded[0], pad_factor=0
             )
-            d.append(np.mean(np.diff(np.unwrap(np.angle(iGM_fft[100:160])))))
-            phase.append(np.unwrap(np.angle(iGM_fft[100:160])))
+            n = len(iGM_fft)
+            d.append(
+                np.mean(np.diff(np.unwrap(np.angle(iGM_fft[int(n / 5) : int(n / 3)]))))
+            )
+            phase.append(np.unwrap(np.angle(iGM_fft[int(n / 5) : int(n / 3)])))
             fft.append(iGM_fft)
 
         idx_center = np.argmin(np.abs(d))
@@ -312,7 +327,7 @@ class get_phase_corrected_spectrum:
         lstsq_fit = least_squares(
             self.minfunc,
             (1e-05, 1),
-            args=(fx[120:160], iGM_fft_center[120:160]),
+            args=(fx[int(n / 4) : int(n / 3)], iGM_fft_center[int(n / 4) : int(n / 3)]),
             method="lm",
         )
 
@@ -324,7 +339,8 @@ class get_phase_corrected_spectrum:
             * np.exp(1j * kL * lstsq_fit.x[0])
             * np.exp(1j * lstsq_fit.x[1])
         )
-        peak_idx = np.argmax(np.abs(corrected_spectrum[0:200]))
+
+        peak_idx = np.argmax(np.abs(corrected_spectrum[0 : int(n / 2) - 20]))
 
         if np.real(corrected_spectrum[peak_idx]) < 0:
             corrected_spectrum = corrected_spectrum * np.exp(1j * np.pi)
@@ -366,3 +382,26 @@ class get_phase_corrected_spectrum:
         ).T
         signal["spectrum"] = xr.DataArray(spectrum.T, dims=["los", "wavenumber"])
         return signal
+
+
+class find_zpd:
+    """
+    Used to correct bad pixels"""
+
+    def __init__(self, specs):
+        self.specs = specs
+
+    def zpd(self, iGM: np.ndarray) -> np.ndarray:
+        """
+        Process the signal
+        :param signal: input signal
+        :return: processed output signal
+        """
+
+        # find the row corresponding to the zero tilt
+        zero_tilt_row = np.argmin((np.abs(iGM[:, 245] - iGM[:, 253]))[110:200]) + 110
+
+        # resample
+        resample_iGM = resample(iGM[zero_tilt_row, :], 100 * len(iGM[zero_tilt_row, :]))
+
+        return np.argmax(resample_iGM)

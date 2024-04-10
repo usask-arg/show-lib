@@ -34,6 +34,7 @@ class L1AImage:
         opd_x: np.array,
         pos_x: np.array,
         pos_y: np.array,
+        zpd: int,
     ):
         self._ds = xr.Dataset()
 
@@ -67,6 +68,7 @@ class L1AImage:
         self._ds["opd_x"] = opd_x
         self._ds["pos_x"] = pos_x
         self._ds["pos_y"] = pos_y
+        self._ds["zpd"] = zpd
 
     @property
     def ds(self):

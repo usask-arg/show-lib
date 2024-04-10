@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.signal import resample
 
 
 class l1a_bad_pixel_removal:
@@ -73,3 +74,28 @@ class l1a_bad_pixel_removal:
         """
 
         return self.interp_bad_pixels(signal)
+
+
+class find_zpd:
+    """
+    Used to correct bad pixels"""
+
+    def __init__(self, specs):
+        self.specs = specs
+
+    def zpd(self, iGM: np.ndarray) -> np.ndarray:
+        """
+        Process the signal
+        :param signal: input signal
+        :return: processed output signal
+        """
+        l1a_bad_pixel_removal(self.specs).interp_bad_pixels(iGM)
+
+        # find the row corresponding to the zero tilt
+        zero_tilt_row = np.argmin((np.abs(iGM[:, 245] - iGM[:, 253]))[110:200]) + 110
+        grid = np.arange(0, len(iGM[zero_tilt_row, :]))
+
+        resample_iGM, resampled_grid = resample(
+            iGM[zero_tilt_row, :], 1000 * len(iGM[zero_tilt_row, :]), t=grid
+        )
+        return resampled_grid[np.argmax(resample_iGM)]

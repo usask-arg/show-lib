@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 
+from .l1a import find_zpd as zpd
 from .l1a import l1a_bad_pixel_removal as bad_pixels
 
 
@@ -40,4 +41,8 @@ class level1A_processing:
 
         dataset["image"].data = signal
         dataset["error"].data = noise
+
+        zpd_loc = zpd(self.specs).zpd(signal["image"].data)
+        dataset["zpd"] = zpd_loc
+
         return dataset

@@ -7,6 +7,7 @@ import xarray as xr
 from skretrieval.util import configure_log
 
 from showlib.flights.er2_2023.l1a.data import L1AFileWriter, L1AImage
+from showlib.flights.er2_2023.l1a.l1a import find_zpd as zpd
 from showlib.flights.er2_2023.Platform.ER2Platform import ER2Platform as er2
 from showlib.flights.er2_2023.Specifications.shower2_specs import SHOW_specs as specs
 
@@ -100,6 +101,7 @@ def process_l0_to_l1a(
         )
         abs_cal = 0.475 * calibration_data.abscal.data
         pixel_response = shs_config.pixel_response[0:247]
+        zpd_loc = zpd(shs_config).zpd(l1a_image)
 
         # Merge the geometry information with the L0 file
         SHOW_l1a_entries.append(
@@ -128,6 +130,7 @@ def process_l0_to_l1a(
                 opd_x=shs_config.opd_x,
                 pos_x=shs_config.pos_x,
                 pos_y=shs_config.pos_y,
+                zpd=zpd_loc,
             )
         )
 
