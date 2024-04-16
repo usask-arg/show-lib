@@ -50,6 +50,7 @@ class L1bImage(L1bImageBase):
         observer_altitude: float,
         sza: np.array,
         saa: np.array,
+        los_azimuth_angle: np.array,
     ):
         ds = xr.Dataset()
 
@@ -70,7 +71,7 @@ class L1bImage(L1bImageBase):
 
         ds["solar_zenith_angle"] = xr.DataArray(sza, dims=["los"])
         ds["relative_solar_azimuth_angle"] = xr.DataArray(saa, dims=["los"])
-
+        ds["los_azimuth_angle"] = xr.DataArray(los_azimuth_angle, dims=["los"])
         return cls(ds)
 
     def __init__(self, ds: xr.Dataset, low_alt=0, high_alt=100000):
