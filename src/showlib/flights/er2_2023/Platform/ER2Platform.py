@@ -196,7 +196,7 @@ class ER2Platform:
         for meas in los_optical_geometry:
             line_of_sight = self.measurement_geometry(meas)
             try:
-                lons.append(line_of_sight[0].tangent_location().latitude)
+                lons.append(line_of_sight[0].tangent_location().longitude)
             except AttributeError:
                 lons.append(0)
         return np.array(lons)
