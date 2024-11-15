@@ -7,7 +7,7 @@ name = "showlib"
 dynamic = ["version"]
 description="Research and development libraries developed at the University of Saskatchewan for the SHOW instrument"
 readme = "README.md"
-dependencies = ['numpy', 'netcdf4', 'xarray', 'skretrieval', 'sasktran']
+dependencies = ['numpy', 'netcdf4', 'xarray', 'skretrieval']
 authors = [
     { name = "usask-arg developers" },
 ]
@@ -18,10 +18,42 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 [project.optional-dependencies]
 test = ["pytest"]
+
+[tool.pixi.project]
+channels = ["usask-arg-nightly", "conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "linux-ppc64le", "osx-64", "osx-arm64", "win-64"]
+conda-pypi-map = {"usask-arg-nightly" = "local_mapping.json"}
+
+[tool.pixi.pypi-dependencies]
+showlib = { path = ".", editable = true }
+
+[tool.pixi.dependencies]
+numpy = "*"
+sasktran2 = "*"
+astropy = "*"
+numba = "*"
+xarray = "*"
+netcdf4 = "*"
+appdirs = "*"
+jupyter = "*"
+matplotlib = "*"
+skretrieval = {channel="usask-arg-nightly", version="*"}
+pytest = ">=8.3.3,<9"
+ruff = "*"
+sphinx = "*"
+myst-nb = "*"
+setuptools_scm = "*"
+pre-commit = "*"
+
+[tool.pixi.tasks]
+test = { cmd = "pytest tests/", cwd = "." }
+pre-commit = { cmd = "pre-commit run -a", cwd = "." }
+docs = { cmd = "sphinx-build -b html docs/source docs/build", cwd = "." }
 
 [tool.setuptools_scm]
 write_to = "src/showlib/_version.py"

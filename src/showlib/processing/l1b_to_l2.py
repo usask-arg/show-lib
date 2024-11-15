@@ -3,17 +3,38 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import numpy as np
 import sasktran2 as sk
 import xarray as xr
+from skretrieval.core.lineshape import UserLineShape
+from skretrieval.retrieval.ancillary import GenericAncillary
+from skretrieval.retrieval.measvec import MeasurementVector, select
+from skretrieval.retrieval.processing import Retrieval
 from skretrieval.util import configure_log
 
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.data import L2FileWriter, L2Profile
-from showlib.l2.processing import SHOWFPRetrieval
+from showlib.l2.optical import h2o_optical_property
+from showlib.l2.showmodel import SHOWForwardModel
+
+
+@Retrieval.register_optical_property("h2o")
+def h2o_ret_optical_property():
+    return h2o_optical_property()
+
+
+@Retrieval.register_optical_property("stratospheric_aerosol")
+def stratospheric_aerosol_optical_property():
+    refrac = sk.mie.refractive.H2SO4()
+    dist = sk.mie.distribution.LogNormalDistribution().freeze(
+        mode_width=1.6, median_radius=80
+    )
+
+    return sk.database.MieDatabase(dist, refrac, np.arange(1300, 1401.0, 5.0))
 
 
 def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
-    ils = xr.open_dataset(ils_path)
+    cal_db = xr.open_dataset(ils_path)
 
     l1b_data = L1bDataSet(l1b_file)
 
@@ -23,122 +44,104 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
 
     logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
-    low_alt = 11000
-    if (l1b_file.parent.parent / "aux/aerosol.nc").exists():
-        aero = xr.open_dataset(
-            l1b_file.parent.parent / "aux/aerosol.nc", group="retrieved/aerosol"
-        )
-    else:
-        aero = None
-    # aero = None
+    low_alt = 12000
 
-    if not out_file.exists():
+    if not out_file.exists() or True:
         l2s = []
         for image in range(len(l1b_data.ds.time)):
-            l1b_image = l1b_data.image(image, low_alt=low_alt, high_alt=20000)
+            l1b_image = l1b_data.image(
+                image, low_alt=low_alt, high_alt=32000, row_reduction=1
+            )
             por_image = por_data.isel(time=image)
 
-            ret = SHOWFPRetrieval(
-                l1b_image,
-                ils,
-                por_data=por_image,
-                aero_data=aero,
-                low_alt=low_alt,
-                minimizer="rodgers",
-                target_kwargs={
-                    "rescale_state_space": False,
+            good = ~np.isnan(por_image.pressure.to_numpy())
+            anc = GenericAncillary(
+                por_image.altitude.to_numpy()[good],
+                por_image.pressure.to_numpy()[good],
+                por_image.temperature.to_numpy()[good],
+            )
+
+            ret = Retrieval(
+                observation=l1b_image,
+                forward_model_cfg={
+                    "meas": {
+                        "kwargs": {
+                            "lineshape_fn": lambda w: UserLineShape(
+                                cal_db.hires_wavenumber.to_numpy(),
+                                cal_db.sel(sample_wavenumber=1e7 / w, method="nearest")[
+                                    "ils"
+                                ].to_numpy(),
+                                False,
+                                integration_fraction=0.95,
+                            ),
+                            "spectral_native_coordinate": "wavenumber_cminv",
+                        },
+                        "class": SHOWForwardModel,
+                    },
                 },
-                rodgers_kwargs={
-                    "lm_damping_method": "fletcher",
-                    "lm_damping": 0.1,
-                    "max_iter": 10,
-                    "lm_change_factor": 10,
-                    "iterative_update_lm": True,
-                    "retreat_lm": True,
-                    "apply_cholesky_scaling": False,
-                    "convergence_factor": 1,
-                    "convergence_check_method": "dcost",
-                },
-                scipy_kwargs={
-                    "loss": "linear",
-                    "include_bounds": False,
-                    "max_nfev": 100,
-                    "x_scale": "jac",
-                    "tr_solver": "lsmr",
-                    "method": "lm",
-                    "xtol": 1e-6,
+                minimizer="scipy",
+                ancillary=anc,
+                l1_kwargs={},
+                model_kwargs={"num_threads": 8},
+                minimizer_kwargs={"max_nfev": 20},
+                target_kwargs={},
+                measvec={
+                    "meas": MeasurementVector(
+                        lambda l1, ctxt, **kwargs: select(  # noqa: ARG005
+                            l1, wavenumber=slice(7312, 7340), **kwargs
+                        )
+                    )
                 },
                 state_kwargs={
                     "absorbers": {
                         "h2o": {
-                            "prior_influence": 1e0,
-                            "tikh_factor": 2.5e-2,
-                            "log_space": True,
+                            "prior_influence": 1e2,
+                            "tikh_factor": 2.5e4,
+                            "log_space": False,
                             "min_value": 0,
                             "max_value": 1e-1,
                             "prior": {"type": "mipas", "value": 1e-6},
                         },
                     },
-                    "albedo": {
-                        "min_wavelength": 1300,
-                        "max_wavelength": 1500,
-                        "wavelength_res": 100,
-                        "initial_value": 0.01,
-                        "prior_influence": 1e-6,
-                        "tikh_factor": 1e6,
-                    },
-                    "splines": {
-                        "los": {
-                            "min_wavelength": 1363,
-                            "max_wavelength": 1370,
-                            "num_knots": 5,
-                            "smoothing": 0,
-                            "order": 2,
-                            "type": "global",
-                            "enabled": True,
-                        }
-                    },
-                    "aerosols": {},
-                    "scale_factors": {
-                        "los": {
-                            "type": "poly",
-                            "order": 2,
+                    "aerosols": {
+                        "stratospheric_aerosol": {
+                            "type": "extinction_profile",
+                            "nominal_wavelength": 1350,
+                            "scale_factor": 1,
+                            "retrieved_quantities": {
+                                "extinction_per_m": {
+                                    "prior_influence": 1e-4,
+                                    "tikh_factor": 1e-1,
+                                    "min_value": 0,
+                                    "max_value": 1e-3,
+                                },
+                            },
+                            "prior": {
+                                "extinction_per_m": {"type": "testing"},
+                            },
                         },
                     },
-                    "shifts": {
-                        "wavelength": {
-                            "type": "wavelength",
-                            "enabled": True,
-                        }
-                    },
-                },
-                engine_kwargs={
-                    "num_streams": 2,
-                    "multiple_scatter_source": sk.MultipleScatterSource.DiscreteOrdinates,
+                    "altitude_grid": np.arange(0.0, 65001.0, 1000.0),
                 },
             )
 
             results = ret.retrieve()
 
-            lat_15 = float(
-                results["retrieved"]["tangent_latitude"].interp(tangent_altitude=15000)
-            )
-            lon_15 = float(
-                results["retrieved"]["tangent_longitude"].interp(tangent_altitude=15000)
-            )
+            ref_lat = l1b_image.reference_latitude()["meas"]
+            ref_lon = l1b_image.reference_longitude()["meas"]
 
             l2s.append(
                 L2Profile(
-                    altitude_m=results["retrieved"].altitude.to_numpy(),
-                    h2o_vmr=results["retrieved"].h2o_vmr.to_numpy(),
-                    h2o_vmr_1sigma=results["retrieved"].h2o_vmr_1sigma.to_numpy(),
-                    h2o_vmr_prior=results["retrieved"].h2o_por.to_numpy(),
-                    tropopause_altitude=float(results["retrieved"].tropopause_altitude),
-                    tangent_latitude=results["retrieved"].tangent_latitude.to_numpy(),
-                    tangent_longitude=results["retrieved"].tangent_longitude.to_numpy(),
-                    averaging_kernel=results["retrieved"].averaging_kernel.to_numpy(),
-                    latitude=lat_15,
-                    longitude=lon_15,
+                    altitude_m=results["state"].altitude.to_numpy(),
+                    h2o_vmr=results["state"].h2o_vmr.to_numpy(),
+                    h2o_vmr_1sigma=results["state"].h2o_vmr_1sigma_error.to_numpy(),
+                    h2o_vmr_prior=results["state"].h2o_vmr_prior.to_numpy(),
+                    tropopause_altitude=float(por_image.tropopause_altitude.to_numpy()),
+                    averaging_kernel=results[
+                        "state"
+                    ].h2o_vmr_averaging_kernel.to_numpy(),
+                    latitude=ref_lat,
+                    longitude=ref_lon,
                     time=l1b_image.ds.time,
                 )
             )
@@ -150,7 +153,7 @@ def process_l1b_to_l2(l1b_file: Path, output_folder: Path, ils_path: Path):
 if __name__ == "__main__":
     configure_log()
     in_folder = Path(
-        r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\SDSPipelineTest\L1B"
+        r"/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight/l1b_mag"
     )
 
     for file in in_folder.glob("HAWC*"):
@@ -158,9 +161,7 @@ if __name__ == "__main__":
             process_l1b_to_l2(
                 file,
                 Path(
-                    r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\SDSPipelineTest\L2",
+                    r"/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight/l2",
                 ),
-                Path(
-                    r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\SDSPipelineTest\calibration\ils.nc"
-                ),
+                Path(r"/Users/dannyz/Documents/sds/ils.nc"),
             )

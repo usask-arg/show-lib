@@ -3,18 +3,13 @@ from __future__ import annotations
 from copy import copy
 
 import numpy as np
-import sasktran2 as sk2
 import xarray as xr
-from skretrieval.core.lineshape import LineShape, UserLineShape
+from skretrieval.core.lineshape import LineShape
 from skretrieval.core.radianceformat import RadianceGridded
 from skretrieval.core.sasktranformat import SASKTRANRadiance
-from skretrieval.retrieval import ForwardModel
+from skretrieval.retrieval.forwardmodel import IdealViewingSpectrograph
 
-from showlib.l1b.data import L1bImageBase
 from showlib.l2.solar.model import SHOWSolarModel
-
-from .ancillary import SHOWAncillary
-from .statevector import SHOWStateVector
 
 
 class SHOWBandModel:
@@ -118,91 +113,34 @@ class SHOWBandModel:
                 self._interpolator[idx, :] = self._ils.integration_weights(wvnum, x)
 
 
-class SHOWFPForwardModel(ForwardModel):
-    def __init__(
-        self,
-        l1b: L1bImageBase,
-        ils: xr.Dataset,
-        alt_grid: np.array,
-        state_vector: SHOWStateVector,
-        ancillary: SHOWAncillary,
-        engine_config: sk2.Config,
-        model_res: float = 0.01,
-    ) -> None:
-        super().__init__()
-
-        self._l1 = l1b.skretrieval_l1()
-        self._state_vector = state_vector
-        self._engine_config = engine_config
-        self._ancillary = ancillary
-        self._ils = ils
-        self._alt_grid = alt_grid
-
-        self._model_res = model_res
-
-        self._model_geometry, self._viewing_geo = l1b.sk2_geometries(self._alt_grid)
-
-        self._model_wavenumber = self._construct_model_wavenumber()
-
-        self._atmosphere = sk2.Atmosphere(
-            self._model_geometry,
-            self._engine_config,
-            wavenumber_cminv=self._model_wavenumber,
-            pressure_derivative=False,
-            temperature_derivative=False,
-        )
-
-        self._state_vector.add_to_atmosphere(self._atmosphere)
-        self._ancillary.add_to_atmosphere(self._atmosphere)
-
-        self._engine = sk2.Engine(
-            self._engine_config, self._model_geometry, self._viewing_geo
-        )
-
-        self._inst_model = self._construct_inst_model()
-
+class SHOWForwardModel(IdealViewingSpectrograph):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._solar_model = SHOWSolarModel()
 
-    def _construct_model_wavenumber(self):
-        return np.arange(7305, 7330, self._model_res)
-
-    def _construct_inst_model(self):
-        delta_wvnum = self._ils.wavenumbers[90000:110000]
-        ils = self._ils.ils[90000:110000]
-
-        ls = UserLineShape(delta_wvnum, ils, zero_centered=True)
-
-        wvnum = self._l1.data.wavenumber.to_numpy()
-
-        return SHOWBandModel(wvnum, ls)
-
     def calculate_radiance(self):
-        sk2_rad = self._engine.calculate_radiance(self._atmosphere)
+        l1 = {}
+        for key in self._engine:
+            sk2_rad = self._engine[key].calculate_radiance(self._atmosphere[key])
 
-        solar_irradiance = (
-            self._solar_model.irradiance(sk2_rad["wavelength"], mjd=54372)
-            * sk2_rad["wavelength"].to_numpy() ** 2
-            / 1e7
-        )
+            solar_irradiance = self._solar_model.irradiance(
+                sk2_rad["wavelength"], mjd=54372
+            )
 
-        sk2_rad *= xr.DataArray(
-            solar_irradiance,
-            dims=["wavelength"],
-            coords={"wavelength": sk2_rad["wavelength"].to_numpy()},
-        )
+            sk2_rad *= xr.DataArray(
+                solar_irradiance,
+                dims=["wavelength"],
+                coords={"wavelength": sk2_rad["wavelength"].to_numpy()},
+            )
 
-        # sk2_rad["angle"] = (["los"], self._l1.ds.angles.to_numpy())
+            sk2_rad = self._state_vector.post_process_sk2_radiances(sk2_rad)
+            sk2_rad = SASKTRANRadiance.from_sasktran2(sk2_rad)
 
-        sk2_rad = self._state_vector.post_process_sk2_radiances(sk2_rad)
+            l1[key] = self._inst_model[key].model_radiance(sk2_rad, None)
+            l1[key].data = l1[key].data.reindex(
+                wavenumber=l1[key].data.wavenumber[::-1]
+            )
 
-        engine_rad = SASKTRANRadiance.from_sasktran2(sk2_rad)
-
-        l1 = self._inst_model.model_radiance(engine_rad, None)
-
-        l1.data["tangent_altitude"] = (
-            ["los"],
-            self._l1.data.tangent_altitude.to_numpy(),
-        )
-        # l1.data["angle"] = (["los"], self._l1.data.angles.to_numpy())
+            self._observation.append_information_to_l1(l1)
 
         return l1

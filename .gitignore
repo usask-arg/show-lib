@@ -163,3 +163,8 @@ local_scripts
 .vscode/
 snake/
 *.snakemake*
+
+*.DS_Store
+.pixi
+.ruff_cache
+pixi.lock
