@@ -190,14 +190,22 @@ class L1bFileWriter:
 
 
 class L1bDataSet:
-    def __init__(self, file_path: Path):
+    def __init__(self, ds: xr.Dataset, name: str, parent: Path):
         """
         Loads in a single L1b file and provides access to the data
 
         """
-        self._ds = xr.open_dataset(file_path)
-        self._name = file_path.stem
-        self._parent = file_path.parent.parent
+        self._ds = ds
+        self._name = name
+        self._parent = parent
+
+    @classmethod
+    def from_image(cls, image: L1bImage):
+        return cls(xr.concat([l1b._ds for l1b in [image]], dim="time"), "", None)
+
+    @classmethod
+    def from_file(cls, file_path: Path):
+        return cls(xr.open_dataset(file_path), file_path.stem, file_path.parent.parent)
 
     @property
     def ds(self):
