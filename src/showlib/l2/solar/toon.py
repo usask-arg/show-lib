@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
-from showlib.config import solar_toon_file
+import sasktran2 as sk
 
 
 class ToonSolarLines:
     def __init__(self):
-        toon_file = solar_toon_file()
+        toon_file = sk.database.StandardDatabase().path(
+            "solar/toon/solar_merged_20160127_600_26316_100.out"
+        )
 
         self._data = pd.read_csv(toon_file.as_posix(), header=None, delimiter=r"\s+")
         self._wavelength = 1e7 / self._data[0].to_numpy()[::-1]
