@@ -8,32 +8,10 @@ import numpy as np
 import sasktran2 as sk
 import xarray as xr
 from skretrieval.core.radianceformat import RadianceGridded
-from skretrieval.geodetic import geodetic
+from skretrieval.retrieval.observation import Observation
 
 
-class L1bImageBase(abc.ABC):
-    """
-    Interface from the L1b data to the retrieval
-    """
-
-    @abc.abstractmethod
-    def sk2_geometries(self, alt_grid) -> (sk.Geometry1D, sk.ViewingGeometry):
-        pass
-
-    @abc.abstractmethod
-    def skretrieval_l1(self):
-        pass
-
-    @abc.abstractproperty
-    def lat(self):
-        pass
-
-    @abc.abstractproperty
-    def lon(self):
-        pass
-
-
-class L1bImage(L1bImageBase):
+class L1bImage(Observation):
     @classmethod
     def from_np_arrays(
         cls,
@@ -83,23 +61,7 @@ class L1bImage(L1bImageBase):
     def ds(self):
         return self._ds
 
-    def sk2_geometries(self, alt_grid) -> (sk.Geometry1D, sk.ViewingGeometry):
-        geo = geodetic()
-
-        geo.from_lat_lon_alt(self.lat, self.lon, 0)
-        earth_radius = np.linalg.norm(geo.location)
-
-        cos_sza = np.cos(self._ds["solar_zenith_angle"].mean())
-
-        model_geometry = sk.Geometry1D(
-            cos_sza=cos_sza,
-            solar_azimuth=0,
-            earth_radius_m=earth_radius,
-            altitude_grid_m=alt_grid,
-            interpolation_method=sk.InterpolationMethod.LinearInterpolation,
-            geometry_type=sk.GeometryType.Spherical,
-        )
-
+    def sk2_geometry(self) -> dict[sk.ViewingGeometry]:
         viewing_geo = sk.ViewingGeometry()
 
         good_alt = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
@@ -122,16 +84,14 @@ class L1bImage(L1bImageBase):
                 )
             )
 
-        return model_geometry, viewing_geo
+        return {"meas": viewing_geo}
 
-    def skretrieval_l1(self):
+    def skretrieval_l1(self, *args, **kwargs):
         ds = xr.Dataset()
 
-        wvnum = (
-            self._ds["left_wavenumber"].to_numpy()[0]
-            + np.arange(0, len(self._ds.sample))
-            * self._ds["wavenumber_spacing"].to_numpy()[0]
-        )
+        wvnum = (self._ds["left_wavenumber"].to_numpy()[0]) + np.arange(
+            0, len(self._ds.sample)
+        ) * self._ds["wavenumber_spacing"].to_numpy()[0]
 
         good = (wvnum > 7310) & (wvnum < 7330)
 
@@ -151,15 +111,71 @@ class L1bImage(L1bImageBase):
         ds["tangent_altitude"] = self._ds["tangent_altitude"][good_alt]
         ds.coords["wavenumber"] = wvnum[good]
 
-        return RadianceGridded(ds)
+        return {"meas": RadianceGridded(ds)}
 
-    @property
-    def lat(self):
-        return float(self._ds["tangent_latitude"].mean())
+    @abc.abstractmethod
+    def sample_wavelengths(self) -> dict[np.array]:
+        """
+        The sample wavelengths for the observation in [nm]
 
-    @property
-    def lon(self):
-        return float(self._ds["tangent_longitude"].mean())
+        Returns
+        -------
+        dict[np.array]
+        """
+        l1 = self.skretrieval_l1()
+
+        return {"meas": 1e7 / l1["meas"].data.wavenumber}
+
+    @abc.abstractmethod
+    def reference_cos_sza(self) -> dict[float]:
+        """
+        The reference cosine of the solar zenith angle for the observation
+
+        Returns
+        -------
+        dict[float]
+        """
+        return {"meas": np.cos(self._ds["solar_zenith_angle"].mean())}
+
+    @abc.abstractmethod
+    def reference_latitude(self) -> dict[float]:
+        """
+        The reference latitude for the observation
+
+        Returns
+        -------
+        dict[float]
+        """
+        return {"meas": float(self._ds["tangent_latitude"].mean())}
+
+    @abc.abstractmethod
+    def reference_longitude(self) -> dict[float]:
+        """
+        The reference longitude for the observation
+
+        Returns
+        -------
+        dict[float]
+        """
+        return {"meas": float(self._ds["tangent_longitude"].mean())}
+
+    def append_information_to_l1(self, l1: dict[RadianceGridded], **kwargs) -> None:
+        """
+        A method that allows for the observation to append information to the L1 data
+        simulated by the forward model. Useful for adding things that are in the real L1 data
+        to the simulations that may be useful inside the measurement vector.
+
+        Parameters
+        ----------
+        l1 : dict[RadianceGridded]
+        """
+        good_alt = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
+            self._ds.tangent_altitude.to_numpy() < self._high_alt
+        )
+        l1["meas"].data["tangent_altitude"] = (
+            ["los"],
+            self._ds["tangent_altitude"].to_numpy()[good_alt],
+        )
 
 
 class L1bFileWriter:
@@ -174,14 +190,22 @@ class L1bFileWriter:
 
 
 class L1bDataSet:
-    def __init__(self, file_path: Path):
+    def __init__(self, ds: xr.Dataset, name: str, parent: Path):
         """
         Loads in a single L1b file and provides access to the data
 
         """
-        self._ds = xr.open_dataset(file_path)
-        self._name = file_path.stem
-        self._parent = file_path.parent.parent
+        self._ds = ds
+        self._name = name
+        self._parent = parent
+
+    @classmethod
+    def from_image(cls, image: L1bImage):
+        return cls(xr.concat([l1b._ds for l1b in [image]], dim="time"), "", None)
+
+    @classmethod
+    def from_file(cls, file_path: Path):
+        return cls(xr.open_dataset(file_path), file_path.stem, file_path.parent.parent)
 
     @property
     def ds(self):

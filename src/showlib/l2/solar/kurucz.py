@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
-from showlib.config import solar_kurucz_folder
+import sasktran2 as sk
 
 
 class KuruczContinuum:
     def __init__(self):
-        folder = solar_kurucz_folder()
+        db = sk.database.StandardDatabase()
 
-        ir_spectrum_file = folder.joinpath("irradiance2008/irradabs1560.dat")
+        ir_spectrum_file = db.path("solar/kurucz/irradiance2008/irradabs1560.dat")
 
         ir_spectrum_data = pd.read_csv(
             ir_spectrum_file.as_posix(), delimiter=r"\s+", header=None, skiprows=12
@@ -19,7 +18,7 @@ class KuruczContinuum:
         self._ir_wavelengths = ir_spectrum_data[0].to_numpy()
         self._ir_spectrum = ir_spectrum_data[1].to_numpy()  # w / m2 / s
 
-        ir_spectrum_file = folder.joinpath("irradiance2008/irradres1560.dat")
+        ir_spectrum_file = db.path("solar/kurucz/irradiance2008/irradres1560.dat")
 
         ir_spectrum_data = pd.read_csv(
             ir_spectrum_file.as_posix(), delimiter=r"\s+", header=None, skiprows=12
@@ -32,7 +31,7 @@ class KuruczContinuum:
             self._ir_spectrum / self._ir_res_spectrum / energy_to_photons / 1e4
         )
 
-        vis_spectrum_file = folder.joinpath("irradiance2005/irradthuwl.dat")
+        vis_spectrum_file = db.path("solar/kurucz/irradiance2005/irradthuwl.dat")
 
         vis_spectrum_data = pd.read_csv(
             vis_spectrum_file.as_posix(), delimiter=r"\s+", header=None, skiprows=9
@@ -41,7 +40,7 @@ class KuruczContinuum:
         self._vis_wavelengths = vis_spectrum_data[0].to_numpy()
         self._vis_spectrum = vis_spectrum_data[1].to_numpy()  # w / m2 / s
 
-        vis_spectrum_file = folder.joinpath("irradiance2005/irradrelwl.dat")
+        vis_spectrum_file = db.path("solar/kurucz/irradiance2005/irradrelwl.dat")
 
         vis_spectrum_data = pd.read_csv(
             vis_spectrum_file.as_posix(), delimiter=r"\s+", header=None, skiprows=5
