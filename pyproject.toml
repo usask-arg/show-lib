@@ -11,11 +11,10 @@ dependencies = ['numpy', 'netcdf4', 'xarray', 'skretrieval']
 authors = [
     { name = "usask-arg developers" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -23,11 +22,11 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+plotting = ["matplotlib"]
 
 [tool.pixi.project]
-channels = ["usask-arg-nightly", "conda-forge"]
+channels = ["conda-forge"]
 platforms = ["linux-64", "linux-aarch64", "linux-ppc64le", "osx-64", "osx-arm64", "win-64"]
-conda-pypi-map = {"usask-arg-nightly" = "local_mapping.json"}
 
 [tool.pixi.pypi-dependencies]
 showlib = { path = ".", editable = true }
@@ -38,22 +37,35 @@ sasktran2 = "*"
 astropy = "*"
 numba = "*"
 xarray = "*"
+pip = "*"
 netcdf4 = "*"
 appdirs = "*"
 jupyter = "*"
 matplotlib = "*"
-skretrieval = {channel="usask-arg-nightly", version="*"}
 pytest = ">=8.3.3,<9"
 ruff = "*"
-sphinx = "*"
-myst-nb = "*"
-setuptools_scm = "*"
 pre-commit = "*"
+
+# Doc dependencies
+[tool.pixi.feature.docs]
+dependencies = {sphinx = "*", "myst-nb" = "*"}
+pypi-dependencies = {sphinx_book_theme = "*", sphinx_design = "*"}
+
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+
+[tool.pixi.environments]
+default = ["test", "plotting", "docs"]
+py311 = ["py311"]
+py312 = ["py312"]
 
 [tool.pixi.tasks]
 test = { cmd = "pytest tests/", cwd = "." }
 pre-commit = { cmd = "pre-commit run -a", cwd = "." }
 docs = { cmd = "sphinx-build -b html docs/source docs/build", cwd = "." }
+readthedocs = { cmd = "rm -rf $READTHEDOCS_OUTPUT/html && cp -r docs/build/ $READTHEDOCS_OUTPUT/html", depends-on = ["docs"] }
 
 [tool.setuptools_scm]
 write_to = "src/showlib/_version.py"
