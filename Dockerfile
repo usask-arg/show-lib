@@ -1,5 +1,7 @@
 FROM ghcr.io/prefix-dev/pixi:0.40.0-mantic AS build
 
+RUN apt update && apt install git
+
 # copy source code
 WORKDIR /app
 COPY . .
