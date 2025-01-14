@@ -67,6 +67,37 @@ pre-commit = { cmd = "pre-commit run -a", cwd = "." }
 docs = { cmd = "sphinx-build -b html docs/source docs/build", cwd = "." }
 readthedocs = { cmd = "rm -rf $READTHEDOCS_OUTPUT/html && cp -r docs/build/ $READTHEDOCS_OUTPUT/html", depends-on = ["docs"] }
 
+[tool.pixi.project]
+channels = ["usask-arg-nightly", "conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "linux-ppc64le", "osx-64", "osx-arm64", "win-64"]
+conda-pypi-map = {"usask-arg-nightly" = "local_mapping.json"}
+
+[tool.pixi.pypi-dependencies]
+showlib = { path = ".", editable = true }
+
+[tool.pixi.dependencies]
+numpy = "*"
+sasktran2 = "*"
+astropy = "*"
+numba = "*"
+xarray = "*"
+netcdf4 = "*"
+appdirs = "*"
+jupyter = "*"
+matplotlib = "*"
+skretrieval = {channel="usask-arg-nightly", version="*"}
+pytest = ">=8.3.3,<9"
+ruff = "*"
+sphinx = "*"
+myst-nb = "*"
+setuptools_scm = "*"
+pre-commit = "*"
+
+[tool.pixi.tasks]
+test = { cmd = "pytest tests/", cwd = "." }
+pre-commit = { cmd = "pre-commit run -a", cwd = "." }
+docs = { cmd = "sphinx-build -b html docs/source docs/build", cwd = "." }
+
 [tool.setuptools_scm]
 write_to = "src/showlib/_version.py"
 
