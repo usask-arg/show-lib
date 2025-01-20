@@ -9,8 +9,6 @@ from skretrieval.core.radianceformat import RadianceGridded
 from skretrieval.core.sasktranformat import SASKTRANRadiance
 from skretrieval.retrieval.forwardmodel import IdealViewingSpectrograph
 
-from showlib.l2.solar.model import SHOWSolarModel
-
 
 class SHOWBandModel:
     def __init__(self, sample_wvnum: np.array, ils: LineShape):
@@ -116,27 +114,16 @@ class SHOWBandModel:
 class SHOWForwardModel(IdealViewingSpectrograph):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._solar_model = SHOWSolarModel()
 
     def calculate_radiance(self):
         l1 = {}
         for key in self._engine:
             sk2_rad = self._engine[key].calculate_radiance(self._atmosphere[key])
 
-            solar_irradiance = self._solar_model.irradiance(
-                sk2_rad["wavelength"], mjd=54372
-            )
-
-            sk2_rad *= xr.DataArray(
-                solar_irradiance,
-                dims=["wavelength"],
-                coords={"wavelength": sk2_rad["wavelength"].to_numpy()},
-            )
-
             sk2_rad = self._state_vector.post_process_sk2_radiances(sk2_rad)
             sk2_rad = SASKTRANRadiance.from_sasktran2(sk2_rad)
 
-            l1[key] = self._inst_model[key].model_radiance(sk2_rad, None)
+            l1[key] = self._inst_model[key].model_radiance(sk2_rad, None)["I"]
             l1[key].data = l1[key].data.reindex(
                 wavenumber=l1[key].data.wavenumber[::-1]
             )
