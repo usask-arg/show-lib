@@ -7,12 +7,12 @@ import numpy as np
 import sasktran2 as sk
 import xarray as xr
 from skretrieval.core.lineshape import UserLineShape
-from skretrieval.retrieval.ancillary import GenericAncillary
 from skretrieval.retrieval.measvec import MeasurementVector, select
 from skretrieval.retrieval.processing import Retrieval
 from skretrieval.util import configure_log
 
 from showlib.l1b.data import L1bDataSet
+from showlib.l2.ancillary import Ancillary
 from showlib.l2.data import L2FileWriter, L2Profile
 from showlib.l2.optical import h2o_optical_property
 from showlib.l2.showmodel import SHOWForwardModel
@@ -61,7 +61,7 @@ def process_l1b_to_l2(l1b_data: L1bDataSet, por_data: xr.Dataset, cal_db: Path):
         por_image = por_data.isel(time=image)
 
         good = ~np.isnan(por_image.pressure.to_numpy())
-        anc = GenericAncillary(
+        anc = Ancillary(
             por_image.altitude.to_numpy()[good],
             por_image.pressure.to_numpy()[good],
             por_image.temperature.to_numpy()[good],
