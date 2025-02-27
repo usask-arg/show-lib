@@ -12,3 +12,6 @@ class Ancillary(GenericAncillary):
         super().add_to_atmosphere(atmo)
 
         atmo["solar_irradiance"] = sk.constituent.SolarIrradiance(mode="average")
+        atmo["ch4"] = sk.climatology.mipas.constituent(
+            "CH4", sk.optical.HITRANAbsorber("CH4")
+        )
