@@ -8,7 +8,7 @@ def h2o_optical_property(
     end_wavenumber=7340,
     wavenumber_resolution=0.01,
     reduction_factor=1,
-    backend="hapi",
+    backend="sasktran2",
 ):
     return sk.database.HITRANDatabase(
         molecule="H2O",

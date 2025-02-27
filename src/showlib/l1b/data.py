@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import abc
+import logging
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import sasktran2 as sk
 import xarray as xr
+from sasktran2.geodetic import WGS84
+from sasktran2.viewinggeo.ecef import ecef_to_sasktran2_ray
 from skretrieval.core.radianceformat import RadianceGridded
 from skretrieval.retrieval.observation import Observation
+from skretrieval.util import rotation_matrix
 
 
 class L1bImage(Observation):
@@ -52,10 +57,21 @@ class L1bImage(Observation):
         ds["los_azimuth_angle"] = xr.DataArray(los_azimuth_angle, dims=["los"])
         return cls(ds)
 
-    def __init__(self, ds: xr.Dataset, low_alt=0, high_alt=100000):
+    def __init__(
+        self,
+        ds: xr.Dataset,
+        low_alt=0,
+        high_alt=100000,
+        low_wvnumber_filter=0,
+        high_wvnumber_filter=1e10,
+        override_los=False,
+    ):
         self._ds = ds
         self._low_alt = low_alt
         self._high_alt = high_alt
+        self._low_wvnumber_filter = low_wvnumber_filter
+        self._high_wvnumber_filter = high_wvnumber_filter
+        self._override_los = override_los
 
     @property
     def ds(self):
@@ -69,20 +85,58 @@ class L1bImage(Observation):
         )
 
         for i in range(len(self._ds.los[good_alt])):
-            viewing_geo.add_ray(
-                sk.TangentAltitudeSolar(
-                    self._ds["tangent_altitude"].to_numpy()[good_alt][i],
-                    np.deg2rad(
-                        self._ds["relative_solar_azimuth_angle"].to_numpy()[good_alt][i]
-                    ),
-                    float(self._ds["spacecraft_altitude"]),
-                    np.cos(
-                        np.deg2rad(
-                            self._ds["solar_zenith_angle"].to_numpy()[good_alt][i]
-                        )
-                    ),
+            if self._override_los:
+                obs_geo = WGS84()
+                obs_geo.from_lat_lon_alt(
+                    self._ds["spacecraft_latitude"],
+                    self._ds["spacecraft_longitude"],
+                    self._ds["spacecraft_altitude"],
                 )
-            )
+
+                tangent_geo = WGS84()
+                tangent_geo.from_lat_lon_alt(
+                    self._ds["tangent_latitude"].to_numpy()[good_alt][i],
+                    self._ds["tangent_longitude"].to_numpy()[good_alt][i],
+                    self._ds["tangent_altitude"].to_numpy()[good_alt][i],
+                )
+
+                look_v = tangent_geo.location - obs_geo.location
+                look_v = look_v / np.linalg.norm(look_v)
+
+                rv = np.cross(
+                    obs_geo.local_up,
+                    look_v,
+                )
+                rv /= np.linalg.norm(rv)
+                rm = rotation_matrix(rv, np.deg2rad(0.21))
+
+                look_v = rm @ look_v
+
+                viewing_geo.add_ray(
+                    ecef_to_sasktran2_ray(
+                        obs_geo.location,
+                        look_v,
+                        pd.to_datetime(self._ds["time"].to_numpy()),
+                        solar_handler=sk.solar.SolarGeometryHandlerAstropy(),
+                    )
+                )
+            else:
+                viewing_geo.add_ray(
+                    sk.TangentAltitudeSolar(
+                        self._ds["tangent_altitude"].to_numpy()[good_alt][i],
+                        np.deg2rad(
+                            self._ds["relative_solar_azimuth_angle"].to_numpy()[
+                                good_alt
+                            ][i]
+                        ),
+                        float(self._ds["spacecraft_altitude"]),
+                        np.cos(
+                            np.deg2rad(
+                                self._ds["solar_zenith_angle"].to_numpy()[good_alt][i]
+                            )
+                        ),
+                    )
+                )
 
         return {"meas": viewing_geo}
 
@@ -93,18 +147,40 @@ class L1bImage(Observation):
             0, len(self._ds.sample)
         ) * self._ds["wavenumber_spacing"].to_numpy()[0]
 
-        good = (wvnum > 7310) & (wvnum < 7330)
+        good = (wvnum > self._low_wvnumber_filter) & (
+            wvnum < self._high_wvnumber_filter
+        )
 
         good_alt = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
             self._ds.tangent_altitude.to_numpy() < self._high_alt
         )
 
+        if self._ds["radiance"].mean() > 1e9:
+            logging.warning(
+                "Radiance appears to not be in units of W/m^2/nm/sr, trying to convert."
+            )
+            c = 299792458  # m/s, speed of light
+            h = 6.62607015e-34  # J/Hz, planck's constant
+            photon_energy = c * h * wvnum[good] / (1e-2)  # number of J per photon
+            rad_conversion_factors = (
+                np.array(photon_energy) * 100 * 100
+            )  # multiply osiris data by unit factor to obtain units of # W/m^2/nm/ster
+
+            wvlen = 1e7 / wvnum[good]
+            # Convert from /cm-1 to /nm
+            rad_conversion_factors = rad_conversion_factors * (1e7 / wvlen**2)
+
+        else:
+            rad_conversion_factors = np.ones(len(wvnum[good]))
+
         ds["radiance"] = xr.DataArray(
-            self._ds["radiance"].to_numpy()[np.ix_(good, good_alt)],
+            self._ds["radiance"].to_numpy()[np.ix_(good, good_alt)]
+            * rad_conversion_factors[:, np.newaxis],
             dims=["wavenumber", "los"],
         )
         ds["radiance_noise"] = xr.DataArray(
-            self._ds["radiance_noise"].to_numpy()[np.ix_(good, good_alt)],
+            self._ds["radiance_noise"].to_numpy()[np.ix_(good, good_alt)]
+            * rad_conversion_factors[:, np.newaxis],
             dims=["wavenumber", "los"],
         )
 
@@ -211,11 +287,14 @@ class L1bDataSet:
     def ds(self):
         return self._ds
 
-    def image(self, sample: int, row_reduction: int = 1, low_alt=0, high_alt=100000):
+    def image(
+        self, sample: int, row_reduction: int = 1, low_alt=0, high_alt=100000, **kwargs
+    ):
         return L1bImage(
             self._ds.isel(time=sample).isel(los=slice(None, None, row_reduction)),
             low_alt=low_alt,
             high_alt=high_alt,
+            **kwargs,
         )
 
     @property
