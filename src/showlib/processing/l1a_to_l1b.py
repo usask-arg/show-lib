@@ -6,8 +6,16 @@ import numpy as np
 import xarray as xr
 from skretrieval.util import configure_log
 
+from showlib.cal_db import CalibrationDatabase
+from showlib.l1a.data import L1AImage
 from showlib.l1b.data import L1bFileWriter, L1bImage
 from showlib.l1b.l1b_processing import level1B_processing as l1b
+
+
+def process_l1a_to_l1b_dataset(
+    l1a: L1AImage, cal_db: CalibrationDatabase, **kwargs  # noqa: ARG001
+) -> L1bImage:
+    return None
 
 
 def process_l1a_to_l1b(SHOW_l1a_file: Path, output_folder: Path):
