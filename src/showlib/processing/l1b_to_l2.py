@@ -144,7 +144,7 @@ def process_l1b_to_l2(
                         "lineshape_fn": ls_fn,
                         "spectral_native_coordinate": "wavenumber_cminv",
                         "model_res_cminv": kwargs.get("model_res_cminv", 0.01),
-                        "round_decimal": 3,
+                        "round_decimal": 2,
                     },
                     "class": SHOWForwardModel,
                 },
