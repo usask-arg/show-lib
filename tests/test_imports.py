@@ -10,8 +10,6 @@ import showlib
 # Modules that are known to be broken against the current dependency set. These are strict xfails,
 # so fixing one of them will fail this test until it is removed from the list.
 KNOWN_BROKEN = {
-    "showlib.flights.er2_2023.Platform.ER2Platform": "needs the legacy sasktran package and removed skretrieval modules",
-    "showlib.flights.er2_2023.l0_to_l1a": "imports ER2Platform",
     "showlib.flights.er2_2023.l1bdata": "imports L1bImageBase, which no longer exists",
 }
 
