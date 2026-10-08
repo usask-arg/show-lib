@@ -18,7 +18,7 @@ class SHOW_specs:
         # Littrow given in air. wavenumber scale and Littrow will be converterd to vacuuum if vac = True
 
         real_path = Path(os.path.realpath(__file__))
-        filename = real_path.parents[1] / r"Specifications\er2_2023.yaml"
+        filename = real_path.parents[1] / "Specifications" / "er2_2023.yaml"
         self.vac = vac
 
         with Path.open(filename) as stream:
@@ -443,11 +443,6 @@ class SHOW_specs:
         """
         s = 1e4 / (wavelength_nm * 10)  # Convert to angstroms
 
-        n = (
-            1
-            + 0.0000834254
-            + 0.02406147 / (130 - s**2)
-            + 0.00015998 / (38.9 - s**2)
-        )
+        n = 1 + 0.0000834254 + 0.02406147 / (130 - s**2) + 0.00015998 / (38.9 - s**2)
 
         return wavelength_nm / n

@@ -430,7 +430,7 @@ class AddFactors(StateVectorElement):
 
         mvals = np.zeros((len(w), self._x.shape[0]))
 
-        mvals[:] = vals[:, 0][np.newaxis, :]
+        mvals[:] = vals[:, 0][np.newaxis, :] * self._scale
 
         for o in range(1, self._order + 1):
             mvals += vals[:, o][np.newaxis, :] * (w**o)[:, np.newaxis] * self._scale
