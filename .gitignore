@@ -165,6 +165,10 @@ snake/
 *.snakemake*
 
 *.DS_Store
-.pixi
 .ruff_cache
+docs/build/
+uv.lock
+
+# Left over from the old pixi setup
+.pixi
 pixi.lock

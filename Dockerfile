@@ -1,24 +1,20 @@
-FROM ghcr.io/prefix-dev/pixi:0.40.0-mantic AS build
+FROM python:3.12-trixie AS build
 
-RUN pixi global install git
+COPY --from=ghcr.io/astral-sh/uv:0.12.24 /uv /bin/uv
 
-# copy source code
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+# copy source code, including .git so setuptools-scm can determine the version
 WORKDIR /app
 COPY . .
-# install dependencies to `/app/.pixi/envs/default`
-RUN pixi install -e default
-# create the shell-hook bash script to activate the environment
-RUN pixi shell-hook -e default -s bash > /shell-hook
-RUN echo "#!/bin/bash" > /app/entrypoint.sh
-RUN cat /shell-hook >> /app/entrypoint.sh
-# extend the shell-hook script to run the command passed to the container
-RUN echo 'exec "$@"' >> /app/entrypoint.sh
+# install showlib and its runtime dependencies into /app/.venv
+RUN uv sync --no-dev --no-editable
 
-FROM ubuntu:24.04 AS production
+FROM python:3.12-slim-trixie AS production
 WORKDIR /app
-# only copy the production environment into prod container
-# please note that the "prefix" (path) needs to stay the same as in the build container
-COPY --from=build /app/.pixi/envs/default /app/.pixi/envs/default
-COPY --from=build --chmod=0755 /app/entrypoint.sh /app/entrypoint.sh
-# copy your project code into the container as well
-COPY ./src /app/src
+# only copy the environment into the production container. The path needs to stay the same as in the
+# build container since the venv scripts reference it
+COPY --from=build /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
