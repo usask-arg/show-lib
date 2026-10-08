@@ -3,12 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import sasktran as sk
 import xarray as xr
-from skretrieval.time.datetime64 import datetime64_to_datetime
-from skretrieval.time.mjd import datetime64_to_mjd
 
 from showlib.por.l2.merra import MERRA2
+from showlib.timeutil import datetime64_to_datetime, datetime64_to_mjd
 
 ALT_GRID = np.arange(0, 100001, 250)
 
@@ -34,6 +32,9 @@ def l2_por(l1b_granule: Path, out_folder: Path):
     temperature = np.zeros((len(ds.time), len(ALT_GRID)))
 
     if not out_file.exists():
+        # MSIS90 is only available in the legacy sasktran package, which is not a dependency
+        import sasktran as sk  # noqa: PLC0415
+
         msis = sk.MSIS90()
 
         for sample in range(len(ds.time)):
@@ -130,8 +131,7 @@ def l2_por_merra(l1b_granule: Path, out_folder: Path, merra2_folder: Path):
 
             tropopause_alt[sample] = float(merra_min["tropopause_altitude"])
 
-            out = xr.Dataset()
-
+        out = xr.Dataset()
         out["temperature"] = xr.DataArray(temperature, dims=["time", "altitude"])
         out["pressure"] = xr.DataArray(pressure, dims=["time", "altitude"])
         out["h2o_vmr"] = xr.DataArray(vmr, dims=["time", "altitude"])

@@ -10,10 +10,10 @@ from astropy.coordinates import AltAz, EarthLocation, get_sun
 from astropy.time import Time
 from scipy import interpolate
 from skretrieval.geodetic import geodetic
-from skretrieval.time.mjd import mjd_to_datetime
 from skretrieval.util import rotation_matrix
 
 from showlib.l1b.data import L1bFileWriter, L1bImage
+from showlib.timeutil import mjd_to_datetime
 
 
 def convert_full_l1b_to_sds(

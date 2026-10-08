@@ -4,9 +4,9 @@ from datetime import timedelta
 from pathlib import Path
 
 import xarray as xr
-from skretrieval.time.mjd import mjd_to_datetime
 
 from showlib.l0.data import L0FileWriter, L0Image
+from showlib.timeutil import mjd_to_datetime
 
 
 def convert_raw_l1a_to_l0_granules(file: Path, out_folder: Path, granularity_minutes=5):
