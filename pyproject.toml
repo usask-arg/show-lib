@@ -12,7 +12,7 @@ dependencies = [
     "netcdf4",
     "numpy",
     "pandas",
-    "sasktran2",
+    "sasktran2[hapi]",
     "scipy",
     "skretrieval",
     "xarray",
