@@ -102,13 +102,13 @@ class AltitudeShift(StateVectorElement):
         return copy(self._shifts)
 
     def name(self) -> str:
-        return "band_shifts"
+        return "altitude_shift"
 
     def lower_bound(self) -> np.array:
-        return np.ones_like(self._x.flatten()) * -0.3
+        return np.ones_like(self._shifts) * -0.3
 
     def upper_bound(self) -> np.array:
-        return np.ones_like(self._x.flatten()) * 0.3
+        return np.ones_like(self._shifts) * 0.3
 
     def inverse_apriori_covariance(self) -> np.ndarray:
         return np.ones_like(self.state()) * 1e-10

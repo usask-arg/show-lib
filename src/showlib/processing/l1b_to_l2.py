@@ -247,7 +247,7 @@ if __name__ == "__main__":
 
     for file in in_folder.glob("HAWC*"):
         if file.suffix == ".nc":
-            process_l1b_to_l2(
+            process_l1b_to_l2_file(
                 file,
                 Path(
                     r"/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight/l2",

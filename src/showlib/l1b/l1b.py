@@ -31,9 +31,8 @@ class bad_pixel_removal:
                 image[index, i] = np.interp(
                     index[0], good_index[0], image[good_index[0], i]
                 )
-            # make everything outside the SHOW window Nans
-            # row 0 is off in the science flight.
-            image[:, 0] = image[:, 1]
+        # row 0 is off in the science flight.
+        image[:, 0] = image[:, 1]
         return image
 
     def process_signal(self, signal: np.ndarray) -> np.ndarray:
@@ -61,11 +60,11 @@ class apodization:
             centered_wavenumbers = np.arange(
                 -10, 10 + sample_spacing / 10, sample_spacing / 10
             )
-            apo = (
-                0.5
-                * np.sinc(2 * L * centered_wavenumbers)
-                / (1 - (2 * L * centered_wavenumbers) ** 2)
-            )
+            u = 2 * L * centered_wavenumbers
+            with np.errstate(divide="ignore", invalid="ignore"):
+                apo = 0.5 * np.sinc(u) / (1 - u**2)
+            # Removable singularity at |u| = 1
+            apo[np.isclose(np.abs(u), 1)] = 0.25
             return centered_wavenumbers, apo
         return None
 
@@ -126,7 +125,6 @@ class shs_spectrum:
 
 
 class spectral_response_correction:
-
     """Removes the spectral response using the correction obtained from the lab characterization."""
 
     def __init__(self):
@@ -140,7 +138,6 @@ class spectral_response_correction:
 
 
 class pixel_response_correction:
-
     """Removes the spectral response using the correction obtained from the lab characterization."""
 
     def __init__(self):
@@ -155,7 +152,6 @@ class pixel_response_correction:
 
 
 class abscal:
-
     """Removes the spectral response using the correction obtained from the lab characterization."""
 
     def __init__(self):
@@ -168,7 +164,6 @@ class abscal:
 
 
 class DC_Filter:
-
     """Removes the DC component assuming that there are potential low frequency brightness fluctuations in the interferograms"""
 
     def __init__(self):
@@ -224,7 +219,6 @@ class DC_Filter:
 
 
 class get_phase_corrected_spectrum:
-
     """Removes the spectral response using the correction obtained from the lab characterization."""
 
     def __init__(self):
@@ -306,7 +300,7 @@ class get_phase_corrected_spectrum:
                 iGM_padded.append(np.pad(iGMc, (0, 2 * i)))
 
             igms.append(iGM_padded)
-            iGM_fft, f_fft = self.get_full_spectrum(
+            iGM_fft, _ = self.get_full_spectrum(
                 self.specs["opd_spacing"], data=iGM_padded[0], pad_factor=0
             )
             n = len(iGM_fft)

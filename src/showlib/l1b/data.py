@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import abc
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -189,7 +188,6 @@ class L1bImage(Observation):
 
         return {"meas": RadianceGridded(ds)}
 
-    @abc.abstractmethod
     def sample_wavelengths(self) -> dict[np.array]:
         """
         The sample wavelengths for the observation in [nm]
@@ -202,7 +200,6 @@ class L1bImage(Observation):
 
         return {"meas": 1e7 / l1["meas"].data.wavenumber}
 
-    @abc.abstractmethod
     def reference_cos_sza(self) -> dict[float]:
         """
         The reference cosine of the solar zenith angle for the observation
@@ -211,9 +208,10 @@ class L1bImage(Observation):
         -------
         dict[float]
         """
-        return {"meas": np.cos(self._ds["solar_zenith_angle"].mean())}
+        return {
+            "meas": float(np.cos(np.deg2rad(self._ds["solar_zenith_angle"].mean())))
+        }
 
-    @abc.abstractmethod
     def reference_latitude(self) -> dict[float]:
         """
         The reference latitude for the observation
@@ -224,7 +222,6 @@ class L1bImage(Observation):
         """
         return {"meas": float(self._ds["tangent_latitude"].mean())}
 
-    @abc.abstractmethod
     def reference_longitude(self) -> dict[float]:
         """
         The reference longitude for the observation
