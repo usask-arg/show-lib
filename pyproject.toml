@@ -14,7 +14,7 @@ dependencies = [
     "pandas",
     "sasktran2[hapi]",
     "scipy",
-    "skretrieval",
+    "skretrieval>=2026.10.0",
     "xarray",
 ]
 authors = [
