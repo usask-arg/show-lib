@@ -16,6 +16,9 @@ from showlib.l2.data import L2FileWriter, L2Profile
 from showlib.l2.optical import h2o_optical_property
 from showlib.l2.preprocessor import l2_preprocessor
 from showlib.l2.showmodel import SHOWForwardModel
+import skretrieval.retrieval.prior as prior
+from skretrieval.retrieval.statevector.constituent import StateVectorElementConstituent
+from copy import copy
 
 
 @Retrieval.register_optical_property("h2o")
@@ -31,6 +34,70 @@ def stratospheric_aerosol_optical_property():
     )
 
     return sk.database.MieDatabase(dist, refrac, np.arange(1300, 1401.0, 5.0))
+
+
+@Retrieval.register_state("aerosols", "extinction_profile_2")
+def aerosol_extinction_profile(self, name: str, native_alt_grid: np.array, cfg: dict):
+    if cfg.get("prior_state") is not None:
+        ext = cfg["prior_state"]
+    else:
+        aero_const = sk.test_util.scenarios.test_aerosol_constituent(native_alt_grid)
+
+        ext = copy(aero_const.extinction_per_m)
+
+    low_boundary = np.nonzero(ext)[0][0]
+
+    #ext[:low_boundary] = ext[low_boundary]
+
+    ext[ext < 1e-15] = 1e-15
+
+    scale_factor = cfg.get("scale_factor", 1)
+
+    secondary_kwargs = {
+        name: np.ones_like(native_alt_grid) * cfg["prior"][name]["value"]
+        for name in cfg["prior"]
+        if name != "extinction_per_m"
+    }
+
+    db = self._optical_property(name)
+
+    aero_const = sk.constituent.ExtinctionScatterer(
+        db,
+        native_alt_grid,
+        ext * scale_factor,
+        cfg.get("nominal_wavelength", 745),
+        "extend",
+        **secondary_kwargs,
+    )
+
+    sv_ele = StateVectorElementConstituent(
+        aero_const,
+        f"{name}",
+        cfg["retrieved_quantities"].keys(),
+        min_value={
+            name: val["min_value"] for name, val in cfg["retrieved_quantities"].items()
+        },
+        max_value={
+            name: val["max_value"] for name, val in cfg["retrieved_quantities"].items()
+        },
+        prior={
+            name: val["tikh_factor"]
+            * prior.VerticalTikhonov(
+                1, prior_state=secondary_kwargs.get(name, ext * scale_factor)
+            )
+            + val["prior_influence"] * prior.ConstantDiagonalPrior()
+            for name, val in cfg["retrieved_quantities"].items()
+        },
+        log_space=False,
+    )
+
+    sv_ele.enabled = cfg.get("enabled", True)
+
+    if cfg.get("initial_guess") is not None:
+        sv_ele.update_state(cfg["initial_guess"])
+
+    return sv_ele
+
 
 
 def process_l1b_to_l2_file(
@@ -84,14 +151,27 @@ def process_l1b_to_l2(
     )
 
     upper_bound = kwargs.get("upper_bound", 30000)
+    configured_lower_bound = kwargs.get("lower_bound")
+    if configured_lower_bound is not None:
+        if not np.isfinite(configured_lower_bound):
+            msg = "lower_bound must be finite"
+            raise ValueError(msg)
+        if configured_lower_bound >= upper_bound:
+            msg = "lower_bound must be less than upper_bound"
+            raise ValueError(msg)
 
     l2s = []
     for i, image in enumerate(process_slice):
         preprocessor = preprocessor_data[i]
+        retrieval_lower_bound = (
+            preprocessor["low_alt"]
+            if configured_lower_bound is None
+            else float(configured_lower_bound)
+        )
 
         l1b_image = l1b_data.image(
             image,
-            low_alt=preprocessor["low_alt"],
+            low_alt=retrieval_lower_bound,
             high_alt=upper_bound,
             row_reduction=kwargs.get("row_reduction", 1),
             low_wvnumber_filter=kwargs.get("low_wvnumber_filter", 0),
@@ -155,16 +235,20 @@ def process_l1b_to_l2(
             model_kwargs={
                 "num_threads": kwargs.get("num_threads", 1),
                 "los_refraction": kwargs.get("los_refraction", True),
-                "multiple_scatter_source": sk.MultipleScatterSource.DiscreteOrdinates,
-                "num_streams": 2,
+                "multiple_scatter_source": kwargs.get(
+                    "multiple_scatter_source",
+                    sk.MultipleScatterSource.TwoStream,
+                ),
+                "num_streams": kwargs.get("num_streams", 2),
+                "wavelength_batch_size": 128
             },
             minimizer_kwargs=minimizer_kwargs,
             target_kwargs={},
             state_kwargs={
                 "absorbers": {
                     "h2o": {
-                        "prior_influence": 1e0,
-                        "tikh_factor": 2.5e3,
+                        "prior_influence": 1e-2,
+                        "tikh_factor": 2.5e1,
                         "log_space": False,
                         "min_value": 0,
                         "max_value": 1e-1,
@@ -173,15 +257,17 @@ def process_l1b_to_l2(
                 },
                 "aerosols": {
                     "stratospheric_aerosol": {
-                        "type": "extinction_profile",
+                        "type": "extinction_profile_2",
+                        "enabled": True,
                         "nominal_wavelength": 1350,
                         "scale_factor": 1,
-                        "initial_guess": preprocessor["aerosol"],
+                        #"initial_guess": preprocessor["aerosol"],
+                        "prior_state": preprocessor["aerosol"],
                         "retrieved_quantities": {
                             "extinction_per_m": {
-                                "prior_influence": 1e-4,
-                                "tikh_factor": 1e-1,
-                                "min_value": 0,
+                                "prior_influence": 1e6,
+                                "tikh_factor": 0,
+                                "min_value": -1e-3,
                                 "max_value": 1e-3,
                             },
                         },

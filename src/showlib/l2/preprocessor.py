@@ -93,8 +93,11 @@ def l2_preprocessor(
             model_kwargs={
                 "num_threads": kwargs.get("num_threads", 1),
                 "los_refraction": kwargs.get("los_refraction", True),
-                "multiple_scatter_source": sk.MultipleScatterSource.DiscreteOrdinates,
-                "num_streams": 2,
+                "multiple_scatter_source": kwargs.get(
+                    "multiple_scatter_source",
+                    sk.MultipleScatterSource.TwoStream,
+                ),
+                "num_streams": kwargs.get("num_streams", 2),
             },
             minimizer_kwargs=minimizer_kwargs,
             target_kwargs={},
@@ -163,13 +166,16 @@ def l2_preprocessor(
         except Exception:
             estimated_low_alt = 8000.0
 
-        aero_prof = results["state"][
-            "stratospheric_aerosol_extinction_per_m"
-        ].to_numpy()
+        if "aerosol_extinction" in por_data:
+            aero_prof = por_data["aerosol_extinction"].isel(time=image).interp(altitude=results["state"].altitude.to_numpy()).to_numpy()
+        else:
+            aero_prof = results["state"][
+                "stratospheric_aerosol_extinction_per_m"
+            ].to_numpy()
         # Set all values above the max tangent altitude to be 0
-        aero_prof[
-            results["state"].altitude.to_numpy() > float(l1.data.tangent_altitude.max())
-        ] = 0
+        #aero_prof[
+        #    results["state"].altitude.to_numpy() > float(l1.data.tangent_altitude.max())
+        #] = 0
 
         l2s.append({"aerosol": aero_prof, "low_alt": float(estimated_low_alt)})
 

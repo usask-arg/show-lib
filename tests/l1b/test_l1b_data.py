@@ -159,3 +159,16 @@ def test_file_round_trip(tmp_path):
     np.testing.assert_array_equal(
         data.image(1).skretrieval_l1()["meas"].data["radiance"], 2.0
     )
+
+
+def test_reference_cos_sza_converts_degrees_to_radians():
+    image = L1bImage(
+        xr.Dataset(
+            {
+                "tangent_altitude": ("los", [10_000.0, 20_000.0]),
+                "solar_zenith_angle": ("los", [60.0, 60.0]),
+            }
+        )
+    )
+
+    assert image.reference_cos_sza()["meas"] == np.cos(np.deg2rad(60.0))

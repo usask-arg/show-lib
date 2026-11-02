@@ -76,12 +76,41 @@ class L1bImage(Observation):
     def ds(self):
         return self._ds
 
+    def _retrieval_los_mask(self) -> np.ndarray:
+        mask = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
+            self._ds.tangent_altitude.to_numpy() < self._high_alt
+        )
+        saturated = np.zeros(mask.shape, dtype=bool)
+
+        if "saturation_affected" in self._ds:
+            saturation_affected = np.asarray(self._ds["saturation_affected"].to_numpy())
+            if saturation_affected.shape != mask.shape:
+                msg = "saturation_affected must contain one value per L1B row"
+                raise ValueError(msg)
+            saturated |= saturation_affected.astype(bool)
+
+        if "saturated_fraction" in self._ds:
+            saturated_fraction = np.asarray(
+                self._ds["saturated_fraction"].to_numpy(), dtype=float
+            )
+            if saturated_fraction.shape != mask.shape:
+                msg = "saturated_fraction must contain one value per L1B row"
+                raise ValueError(msg)
+            if np.any(~np.isfinite(saturated_fraction)):
+                msg = "saturated_fraction must be finite"
+                raise ValueError(msg)
+            saturated |= saturated_fraction > 0
+
+        mask &= ~saturated
+        if not np.any(mask):
+            msg = "No unsaturated L1B rows remain within the retrieval altitude range"
+            raise ValueError(msg)
+        return mask
+
     def sk2_geometry(self) -> dict[sk.ViewingGeometry]:
         viewing_geo = sk.ViewingGeometry()
 
-        good_alt = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
-            self._ds.tangent_altitude.to_numpy() < self._high_alt
-        )
+        good_alt = self._retrieval_los_mask()
 
         for i in range(len(self._ds.los[good_alt])):
             if self._override_los:
@@ -142,17 +171,17 @@ class L1bImage(Observation):
     def skretrieval_l1(self, *args, **kwargs):
         ds = xr.Dataset()
 
-        wvnum = (self._ds["left_wavenumber"].to_numpy()[0]) + np.arange(
-            0, len(self._ds.sample)
-        ) * self._ds["wavenumber_spacing"].to_numpy()[0]
+        wvnum = (
+            (self._ds["left_wavenumber"].to_numpy()[0])
+            + np.arange(0, len(self._ds.sample))
+            * self._ds["wavenumber_spacing"].to_numpy()[0]
+        )
 
         good = (wvnum > self._low_wvnumber_filter) & (
             wvnum < self._high_wvnumber_filter
         )
 
-        good_alt = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
-            self._ds.tangent_altitude.to_numpy() < self._high_alt
-        )
+        good_alt = self._retrieval_los_mask()
 
         if self._ds["radiance"].mean() > 1e9:
             logging.warning(
@@ -208,9 +237,9 @@ class L1bImage(Observation):
         -------
         dict[float]
         """
-        return {
-            "meas": float(np.cos(np.deg2rad(self._ds["solar_zenith_angle"].mean())))
-        }
+        good_alt = self._retrieval_los_mask()
+        mean_sza_deg = float(self._ds["solar_zenith_angle"][good_alt].mean())
+        return {"meas": float(np.cos(np.deg2rad(mean_sza_deg)))}
 
     def reference_latitude(self) -> dict[float]:
         """
@@ -220,7 +249,8 @@ class L1bImage(Observation):
         -------
         dict[float]
         """
-        return {"meas": float(self._ds["tangent_latitude"].mean())}
+        good_alt = self._retrieval_los_mask()
+        return {"meas": float(self._ds["tangent_latitude"][good_alt].mean())}
 
     def reference_longitude(self) -> dict[float]:
         """
@@ -230,7 +260,8 @@ class L1bImage(Observation):
         -------
         dict[float]
         """
-        return {"meas": float(self._ds["tangent_longitude"].mean())}
+        good_alt = self._retrieval_los_mask()
+        return {"meas": float(self._ds["tangent_longitude"][good_alt].mean())}
 
     def append_information_to_l1(self, l1: dict[RadianceGridded], **kwargs) -> None:
         """
@@ -242,9 +273,7 @@ class L1bImage(Observation):
         ----------
         l1 : dict[RadianceGridded]
         """
-        good_alt = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
-            self._ds.tangent_altitude.to_numpy() < self._high_alt
-        )
+        good_alt = self._retrieval_los_mask()
         l1["meas"].data["tangent_altitude"] = (
             ["los"],
             self._ds["tangent_altitude"].to_numpy()[good_alt],
@@ -274,7 +303,8 @@ class L1bDataSet:
 
     @classmethod
     def from_image(cls, image: L1bImage):
-        return cls(xr.concat([l1b._ds for l1b in [image]], dim="time"), "", None)
+        image_ds = image._ds.set_coords("time")
+        return cls(xr.concat([image_ds], dim="time"), "", None)
 
     @classmethod
     def from_file(cls, file_path: Path):

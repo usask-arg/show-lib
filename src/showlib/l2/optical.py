@@ -4,8 +4,8 @@ import sasktran2 as sk
 
 
 def h2o_optical_property(
-    start_wavenumber=7295,
-    end_wavenumber=7340,
+    start_wavenumber=7240,
+    end_wavenumber=7380,
     wavenumber_resolution=0.01,
     reduction_factor=1,
     backend="sasktran2",
