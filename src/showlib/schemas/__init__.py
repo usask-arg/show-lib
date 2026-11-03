@@ -12,6 +12,7 @@ import xarray as xr
 import yaml
 
 from showlib.schemas._constraints import CONSTRAINT_CHECKS, DEFERRED_CONSTRAINTS
+from showlib.schemas._markdown import render_markdown
 
 PRODUCTS = ("l1a", "l1b", "cal_db")
 
