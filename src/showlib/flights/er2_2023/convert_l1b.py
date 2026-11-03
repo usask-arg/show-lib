@@ -12,8 +12,25 @@ from scipy import interpolate
 from skretrieval.geodetic import geodetic
 from skretrieval.util import rotation_matrix
 
-from showlib.l1b.data import L1bFileWriter, L1bImage
+from showlib.l1b.data import L1bDataSet, L1bImage
 from showlib.timeutil import mjd_to_datetime
+
+_PLANCK_CONSTANT_J_S = 6.62607015e-34
+_SPEED_OF_LIGHT_M_S = 299792458.0
+
+
+def _unit_conversion(radiance: np.ndarray, wavenumber: np.ndarray) -> np.ndarray:
+    """Factor converting the ER-2 radiance to W m-2 sr-1 nm-1, per wavenumber.
+
+    The ER-2 radiances may be in photons s-1 cm-2 sr-1 (cm-1)-1; L1B is always
+    W m-2 sr-1 nm-1. A mean above 1e9 is treated as photon units, as L1bImage did
+    before the L1B schema fixed the units.
+    """
+    if np.nanmean(radiance) <= 1e9:
+        return np.ones_like(wavenumber)
+    photon_energy_j = _PLANCK_CONSTANT_J_S * _SPEED_OF_LIGHT_M_S * wavenumber * 100
+    per_nm = 1e7 / (1e7 / wavenumber) ** 2
+    return photon_energy_j * 1e4 * per_nm
 
 
 def convert_full_l1b_to_sds(
@@ -68,8 +85,7 @@ def convert_full_l1b_to_sds(
     for i in range(0, len(times), 5):
         time = mjd_to_datetime(times[i])
         if time - start_time > granularity_delta:
-            writer = L1bFileWriter(l1bs)
-            writer.save(
+            L1bDataSet.from_images(l1bs).save(
                 out_folder.joinpath(
                     f"HAWC_H2OL_Radiances_L1B_{start_time.strftime('%Y-%m-%dT%H:%M:%SZ')}.v0_0_1.STD.nc"
                 )
@@ -118,22 +134,28 @@ def convert_full_l1b_to_sds(
             alts.append(geo.altitude)
 
         geo.from_xyz(obs_pos)
-        lwv = selected["wavenumber"].to_numpy()[0]
-        spacing = float(selected["wavenumber"].diff(dim="wavenumber").mean())
+        wavenumber = selected["wavenumber"].to_numpy()
+        radiance = selected["radiance"].transpose("los", "wavenumber").to_numpy()
+        noise = selected["radiance_noise"].transpose("los", "wavenumber").to_numpy()
+        conversion = _unit_conversion(radiance, wavenumber)
         l1b = L1bImage.from_np_arrays(
-            selected["radiance"].to_numpy(),
-            selected["radiance_noise"].to_numpy(),
-            np.array(alts),
-            np.array(lats),
-            np.array(lons),
-            np.ones_like(alts) * lwv,
-            np.ones_like(alts) * spacing,
-            time,
-            geo.latitude,
-            geo.longitude,
-            geo.altitude,
-            np.array(szas),
-            np.array(saas),
+            radiance=radiance * conversion,
+            radiance_noise=noise * conversion,
+            wavenumber=wavenumber,
+            tangent_altitude=np.array(alts),
+            tangent_latitude=np.array(lats),
+            tangent_longitude=np.array(lons),
+            time=time,
+            spacecraft_latitude=geo.latitude,
+            spacecraft_longitude=geo.longitude,
+            spacecraft_altitude=geo.altitude,
+            solar_zenith_angle=np.array(szas),
+            relative_solar_azimuth_angle=np.array(saas),
+            # Not computed by this converter
+            los_azimuth_angle=np.full(len(alts), np.nan),
+            # The ER-2 apodization and noise model are not recorded in the source
+            # files; the L1B schema requires them, so saving fails until they are set.
+            processing={},
         )
         l1bs.append(l1b)
 

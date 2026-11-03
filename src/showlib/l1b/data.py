@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -14,46 +13,67 @@ from skretrieval.core.radianceformat import RadianceGridded
 from skretrieval.retrieval.observation import Observation
 from skretrieval.util import rotation_matrix
 
+from showlib.schemas import apply_metadata, check
+
 
 class L1bImage(Observation):
+    """One L1B image, used as the observation in the L2 retrieval; see l1b.yaml."""
+
     @classmethod
     def from_np_arrays(
         cls,
-        radiance: np.array,
-        radiance_noise: np.array,
-        tangent_altitude: np.array,
-        tangent_latitude: np.array,
-        tangent_longitude: np.array,
-        left_wavenumber: np.array,
-        wavenumber_spacing: np.array,
-        time: datetime,
-        observer_latitude: float,
-        observer_longitude: float,
-        observer_altitude: float,
-        sza: np.array,
-        saa: np.array,
-        los_azimuth_angle: np.array,
+        *,
+        radiance: np.ndarray,
+        radiance_noise: np.ndarray,
+        wavenumber: np.ndarray,
+        tangent_altitude: np.ndarray,
+        tangent_latitude: np.ndarray,
+        tangent_longitude: np.ndarray,
+        time: datetime | np.datetime64,
+        spacecraft_latitude: float,
+        spacecraft_longitude: float,
+        spacecraft_altitude: float,
+        solar_zenith_angle: np.ndarray,
+        relative_solar_azimuth_angle: np.ndarray,
+        los_azimuth_angle: np.ndarray,
+        processing: dict,
+        saturated_fraction: np.ndarray | None = None,
     ):
-        ds = xr.Dataset()
+        """Build an image from arrays.
 
-        ds["radiance"] = xr.DataArray(radiance, dims=["sample", "los"])
-        ds["radiance_noise"] = xr.DataArray(radiance_noise, dims=["sample", "los"])
-        ds["tangent_altitude"] = xr.DataArray(tangent_altitude, dims=["los"])
-        ds["tangent_latitude"] = xr.DataArray(tangent_latitude, dims=["los"])
-        ds["tangent_longitude"] = xr.DataArray(tangent_longitude, dims=["los"])
+        radiance, radiance_noise, and wavenumber have shape (los, spectral_sample);
+        a one-dimensional wavenumber is shared by every line of sight. processing
+        holds the L1B processing attributes (apodization_window, ...).
+        """
+        spectral_dims = ["los", "spectral_sample"]
+        radiance = np.asarray(radiance, dtype=float)
+        if saturated_fraction is None:
+            saturated_fraction = np.zeros(radiance.shape[0])
 
-        ds["time"] = time
-
-        ds["left_wavenumber"] = xr.DataArray(left_wavenumber, dims=["los"])
-        ds["wavenumber_spacing"] = xr.DataArray(wavenumber_spacing, dims=["los"])
-
-        ds["spacecraft_latitude"] = observer_latitude
-        ds["spacecraft_longitude"] = observer_longitude
-        ds["spacecraft_altitude"] = observer_altitude
-
-        ds["solar_zenith_angle"] = xr.DataArray(sza, dims=["los"])
-        ds["relative_solar_azimuth_angle"] = xr.DataArray(saa, dims=["los"])
-        ds["los_azimuth_angle"] = xr.DataArray(los_azimuth_angle, dims=["los"])
+        ds = xr.Dataset(
+            {
+                "radiance": (spectral_dims, radiance),
+                "radiance_noise": (spectral_dims, radiance_noise),
+                "tangent_altitude": ("los", tangent_altitude),
+                "tangent_latitude": ("los", tangent_latitude),
+                "tangent_longitude": ("los", tangent_longitude),
+                "spacecraft_latitude": ((), float(spacecraft_latitude)),
+                "spacecraft_longitude": ((), float(spacecraft_longitude)),
+                "spacecraft_altitude": ((), float(spacecraft_altitude)),
+                "solar_zenith_angle": ("los", solar_zenith_angle),
+                "relative_solar_azimuth_angle": ("los", relative_solar_azimuth_angle),
+                "los_azimuth_angle": ("los", los_azimuth_angle),
+                "saturated_fraction": ("los", saturated_fraction),
+            },
+            coords={
+                "time": np.datetime64(time, "ns"),
+                "wavenumber": (
+                    spectral_dims,
+                    np.broadcast_to(wavenumber, radiance.shape).copy(),
+                ),
+            },
+            attrs=dict(processing),
+        )
         return cls(ds)
 
     def __init__(
@@ -77,31 +97,10 @@ class L1bImage(Observation):
         return self._ds
 
     def _retrieval_los_mask(self) -> np.ndarray:
-        mask = (self._ds.tangent_altitude.to_numpy() > self._low_alt) & (
-            self._ds.tangent_altitude.to_numpy() < self._high_alt
-        )
-        saturated = np.zeros(mask.shape, dtype=bool)
-
-        if "saturation_affected" in self._ds:
-            saturation_affected = np.asarray(self._ds["saturation_affected"].to_numpy())
-            if saturation_affected.shape != mask.shape:
-                msg = "saturation_affected must contain one value per L1B row"
-                raise ValueError(msg)
-            saturated |= saturation_affected.astype(bool)
-
+        altitude = self._ds["tangent_altitude"].to_numpy()
+        mask = (altitude > self._low_alt) & (altitude < self._high_alt)
         if "saturated_fraction" in self._ds:
-            saturated_fraction = np.asarray(
-                self._ds["saturated_fraction"].to_numpy(), dtype=float
-            )
-            if saturated_fraction.shape != mask.shape:
-                msg = "saturated_fraction must contain one value per L1B row"
-                raise ValueError(msg)
-            if np.any(~np.isfinite(saturated_fraction)):
-                msg = "saturated_fraction must be finite"
-                raise ValueError(msg)
-            saturated |= saturated_fraction > 0
-
-        mask &= ~saturated
+            mask &= ~(self._ds["saturated_fraction"].to_numpy() > 0)
         if not np.any(mask):
             msg = "No unsaturated L1B rows remain within the retrieval altitude range"
             raise ValueError(msg)
@@ -112,7 +111,7 @@ class L1bImage(Observation):
 
         good_alt = self._retrieval_los_mask()
 
-        for i in range(len(self._ds.los[good_alt])):
+        for i in range(np.count_nonzero(good_alt)):
             if self._override_los:
                 obs_geo = WGS84()
                 obs_geo.from_lat_lon_alt(
@@ -169,49 +168,23 @@ class L1bImage(Observation):
         return {"meas": viewing_geo}
 
     def skretrieval_l1(self, *args, **kwargs):
-        ds = xr.Dataset()
+        good_alt = self._retrieval_los_mask()
 
-        wvnum = (
-            (self._ds["left_wavenumber"].to_numpy()[0])
-            + np.arange(0, len(self._ds.sample))
-            * self._ds["wavenumber_spacing"].to_numpy()[0]
-        )
-
+        wavenumber = self._ds["wavenumber"].to_numpy()[good_alt]
+        if np.any(wavenumber != wavenumber[0]):
+            msg = "The retrieval needs the same wavenumber grid on every line of sight"
+            raise NotImplementedError(msg)
+        wvnum = wavenumber[0]
         good = (wvnum > self._low_wvnumber_filter) & (
             wvnum < self._high_wvnumber_filter
         )
 
-        good_alt = self._retrieval_los_mask()
-
-        if self._ds["radiance"].mean() > 1e9:
-            logging.warning(
-                "Radiance appears to not be in units of W/m^2/nm/sr, trying to convert."
+        ds = xr.Dataset()
+        for name in ["radiance", "radiance_noise"]:
+            ds[name] = xr.DataArray(
+                self._ds[name].to_numpy()[np.ix_(good_alt, good)].T,
+                dims=["wavenumber", "los"],
             )
-            c = 299792458  # m/s, speed of light
-            h = 6.62607015e-34  # J/Hz, planck's constant
-            photon_energy = c * h * wvnum[good] / (1e-2)  # number of J per photon
-            rad_conversion_factors = (
-                np.array(photon_energy) * 100 * 100
-            )  # multiply osiris data by unit factor to obtain units of # W/m^2/nm/ster
-
-            wvlen = 1e7 / wvnum[good]
-            # Convert from /cm-1 to /nm
-            rad_conversion_factors = rad_conversion_factors * (1e7 / wvlen**2)
-
-        else:
-            rad_conversion_factors = np.ones(len(wvnum[good]))
-
-        ds["radiance"] = xr.DataArray(
-            self._ds["radiance"].to_numpy()[np.ix_(good, good_alt)]
-            * rad_conversion_factors[:, np.newaxis],
-            dims=["wavenumber", "los"],
-        )
-        ds["radiance_noise"] = xr.DataArray(
-            self._ds["radiance_noise"].to_numpy()[np.ix_(good, good_alt)]
-            * rad_conversion_factors[:, np.newaxis],
-            dims=["wavenumber", "los"],
-        )
-
         ds["tangent_altitude"] = self._ds["tangent_altitude"][good_alt]
         ds.coords["wavenumber"] = wvnum[good]
 
@@ -280,45 +253,54 @@ class L1bImage(Observation):
         )
 
 
-class L1bFileWriter:
-    def __init__(self, l1b_data: list[L1bImage]) -> None:
-        self._data = xr.concat([l1b._ds for l1b in l1b_data], dim="time")
-
-    def _apply_global_attributes(self):
-        pass
-
-    def save(self, out_file: Path):
-        self._data.to_netcdf(out_file.as_posix())
-
-
 class L1bDataSet:
-    def __init__(self, ds: xr.Dataset, name: str, parent: Path):
-        """
-        Loads in a single L1b file and provides access to the data
+    """An L1B granule: consecutive images along time; see l1b.yaml."""
 
-        """
+    def __init__(self, ds: xr.Dataset, name: str = "", parent: Path | None = None):
+        check(ds, "l1b")
         self._ds = ds
         self._name = name
         self._parent = parent
 
     @classmethod
-    def from_image(cls, image: L1bImage):
-        image_ds = image._ds.set_coords("time")
-        return cls(xr.concat([image_ds], dim="time"), "", None)
+    def from_images(
+        cls, images: list[L1bImage], name: str = "", parent: Path | None = None
+    ) -> L1bDataSet:
+        datasets = [image.ds for image in images]
+        wavenumber = datasets[0]["wavenumber"].variable
+        if any(not ds["wavenumber"].variable.equals(wavenumber) for ds in datasets):
+            msg = "All images in a granule must share one wavenumber grid"
+            raise ValueError(msg)
+        if any(ds.attrs != datasets[0].attrs for ds in datasets[1:]):
+            msg = "All images in a granule must have the same processing settings"
+            raise ValueError(msg)
+
+        ds = xr.concat(
+            [ds.drop_vars("wavenumber") for ds in datasets],
+            dim="time",
+            data_vars="all",
+            coords="minimal",
+            join="exact",
+            combine_attrs="override",
+        ).assign_coords(wavenumber=wavenumber)
+        return cls(apply_metadata(ds, "l1b"), name, parent)
 
     @classmethod
-    def from_file(cls, file_path: Path):
-        return cls(xr.open_dataset(file_path), file_path.stem, file_path.parent.parent)
+    def from_file(cls, file_path: Path) -> L1bDataSet:
+        return cls(xr.load_dataset(file_path), file_path.stem, file_path.parent.parent)
 
     @property
     def ds(self):
         return self._ds
 
+    def save(self, out_file: Path) -> None:
+        self._ds.to_netcdf(out_file)
+
     def image(
-        self, sample: int, row_reduction: int = 1, low_alt=0, high_alt=100000, **kwargs
+        self, index: int, row_reduction: int = 1, low_alt=0, high_alt=100000, **kwargs
     ):
         return L1bImage(
-            self._ds.isel(time=sample).isel(los=slice(None, None, row_reduction)),
+            self._ds.isel(time=index).isel(los=slice(None, None, row_reduction)),
             low_alt=low_alt,
             high_alt=high_alt,
             **kwargs,

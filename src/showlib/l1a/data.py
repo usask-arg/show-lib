@@ -6,53 +6,113 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
+from showlib.schemas import apply_metadata, check
+
+SIMULATION_GROUP = "simulation"
+
+
+def wrap_degrees(angle, lower: float) -> np.ndarray:
+    """Wrap angles in degrees into [lower, lower + 360)."""
+    return (np.asarray(angle, dtype=float) - lower) % 360.0 + lower
+
 
 class L1AImage:
+    """One SHOW detector image with its geolocation; see l1a.yaml."""
+
     def __init__(
         self,
-        image: np.array,
-        tangent_locations: np.array,
-        tangent_longitudes: np.array,
-        tangent_latitudes: np.array,
-        spacecraft_latitude: np.array,
-        spacecraft_longitude: np.array,
-        spacecraft_altitude: np.array,
-        solar_zenith_angle: np.array,
-        relative_solar_azimuth_angle: np.array,
-        los_azimuth_angle: np.array,
-        time: datetime,
+        *,
+        image: np.ndarray,
+        time: datetime | np.datetime64,
+        tangent_altitude: np.ndarray,
+        tangent_latitude: np.ndarray,
+        tangent_longitude: np.ndarray,
+        spacecraft_latitude: float,
+        spacecraft_longitude: float,
+        spacecraft_altitude: float,
+        solar_zenith_angle: np.ndarray,
+        relative_solar_azimuth_angle: np.ndarray,
+        los_azimuth_angle: np.ndarray,
+        exposure_time: float,
+        num_averaged_exposures: int = 1,
+        saturated: np.ndarray | None = None,
     ):
-        self._ds = xr.Dataset()
-
-        self._ds["image"] = xr.DataArray(image, dims=["pixelheight", "pixelcolumn"])
-
-        # Merge the geometry information with the L0 file
-        self._ds["tangent_altitude"] = xr.DataArray(tangent_locations, dims=["los"])
-        self._ds["tangent_latitude"] = xr.DataArray(tangent_latitudes, dims=["los"])
-        self._ds["tangent_longitude"] = xr.DataArray(tangent_longitudes, dims=["los"])
-        self._ds["spacecraft_latitude"] = spacecraft_latitude
-        self._ds["spacecraft_longitude"] = spacecraft_longitude
-        self._ds["spacecraft_altitude"] = spacecraft_altitude
-        self._ds["solar_zenith_angle"] = xr.DataArray(solar_zenith_angle, dims=["los"])
-        self._ds["relative_solar_azimuth_angle"] = xr.DataArray(
-            relative_solar_azimuth_angle, dims=["los"]
-        )
-        self._ds["los_azimuth_angle"] = xr.DataArray(los_azimuth_angle, dims=["los"])
-        self._ds["time"] = time
+        image_dims = ["los", "pixelcolumn"]
+        data_vars = {
+            "image": (image_dims, np.asarray(image, dtype=float)),
+            "tangent_altitude": ("los", tangent_altitude),
+            "tangent_latitude": ("los", tangent_latitude),
+            "tangent_longitude": ("los", tangent_longitude),
+            "spacecraft_latitude": ((), float(spacecraft_latitude)),
+            "spacecraft_longitude": ((), float(spacecraft_longitude)),
+            "spacecraft_altitude": ((), float(spacecraft_altitude)),
+            "solar_zenith_angle": ("los", solar_zenith_angle),
+            "relative_solar_azimuth_angle": (
+                "los",
+                wrap_degrees(relative_solar_azimuth_angle, -180.0),
+            ),
+            "los_azimuth_angle": ("los", wrap_degrees(los_azimuth_angle, 0.0)),
+            "exposure_time": ((), float(exposure_time)),
+            "num_averaged_exposures": ((), np.int64(num_averaged_exposures)),
+        }
+        if saturated is not None:
+            data_vars["saturated"] = (image_dims, np.asarray(saturated, dtype=bool))
+        self._ds = xr.Dataset(data_vars, coords={"time": np.datetime64(time, "ns")})
 
     @property
-    def ds(self):
+    def ds(self) -> xr.Dataset:
         return self._ds
 
 
-class L1AFileWriter:
-    def __init__(self, L1A_images: list[L1AImage]) -> None:
-        self._data = xr.concat([l1a_image.ds for l1a_image in L1A_images], dim="time")
+class L1ADataSet:
+    """An L1A granule: consecutive images along time, plus optional simulation data."""
 
-        self._apply_global_attributes()
+    def __init__(self, ds: xr.Dataset, simulation: xr.Dataset | None = None):
+        check(_as_tree(ds, simulation), "l1a")
+        self._ds = ds
+        self._simulation = simulation
 
-    def _apply_global_attributes(self):
-        pass
+    @classmethod
+    def from_images(
+        cls, images: list[L1AImage], simulation: xr.Dataset | None = None
+    ) -> L1ADataSet:
+        ds = xr.concat(
+            [image.ds for image in images],
+            dim="time",
+            data_vars="all",
+            coords="minimal",
+            join="exact",
+        )
+        tree = apply_metadata(_as_tree(ds, simulation), "l1a")
+        return cls(*_from_tree(tree))
 
-    def save(self, out_file: Path):
-        self._data.to_netcdf(out_file.as_posix())
+    @classmethod
+    def from_file(cls, path: Path) -> L1ADataSet:
+        with xr.open_datatree(path) as tree:
+            return cls(*_from_tree(tree.load()))
+
+    @property
+    def ds(self) -> xr.Dataset:
+        return self._ds
+
+    @property
+    def simulation(self) -> xr.Dataset | None:
+        return self._simulation
+
+    def save(self, path: Path) -> None:
+        _as_tree(self._ds, self._simulation).to_netcdf(path)
+
+
+def _as_tree(ds: xr.Dataset, simulation: xr.Dataset | None) -> xr.DataTree:
+    nodes = {"/": ds}
+    if simulation is not None:
+        nodes[f"/{SIMULATION_GROUP}"] = simulation
+    return xr.DataTree.from_dict(nodes)
+
+
+def _from_tree(tree: xr.DataTree) -> tuple[xr.Dataset, xr.Dataset | None]:
+    simulation = tree.children.get(SIMULATION_GROUP)
+    return (
+        tree.to_dataset(inherit=False),
+        None if simulation is None else simulation.to_dataset(inherit=False),
+    )
