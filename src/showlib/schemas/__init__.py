@@ -93,6 +93,44 @@ def check(
         raise SchemaValidationError(product, errors)
 
 
+def apply_metadata(
+    data: xr.Dataset | xr.DataTree, product: str
+) -> xr.Dataset | xr.DataTree:
+    """Return a copy of ``data`` with schema metadata filled in.
+
+    Adds ``units`` and ``description`` attributes to variables that lack them and
+    sets the global ``schema_version``. Existing units are kept, so ``check`` still
+    reports any that are wrong.
+    """
+    schema = load_schema(product)
+    if not isinstance(data, xr.DataTree):
+        result = _fill_group_metadata(data, schema["variables"])
+        result.attrs["schema_version"] = schema["schema_version"]
+        return result
+
+    groups = schema.get("groups", {})
+    nodes = {"/": apply_metadata(data.to_dataset(inherit=False), product)}
+    for name, child in data.children.items():
+        child_ds = child.to_dataset(inherit=False)
+        if name in groups:
+            child_ds = _fill_group_metadata(child_ds, groups[name]["variables"])
+        nodes[f"/{name}"] = child_ds
+    return xr.DataTree.from_dict(nodes)
+
+
+def _fill_group_metadata(ds: xr.Dataset, variables: dict) -> xr.Dataset:
+    ds = ds.copy()
+    for name, var in ds.variables.items():
+        field = variables.get(name)
+        if field is None:
+            continue
+        var.attrs = dict(var.attrs)
+        if "units" in field:
+            var.attrs.setdefault("units", field["units"])
+        var.attrs.setdefault("description", " ".join(field["description"].split()))
+    return ds
+
+
 def _check_group(ds: xr.Dataset, spec: dict, prefix: str) -> list[Issue]:
     issues = []
     variables = spec.get("variables", {})
