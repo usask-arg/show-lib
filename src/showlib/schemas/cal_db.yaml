@@ -1,0 +1,318 @@
+product: CAL_DB
+schema_version: 0.3.0
+status: draft
+description: >
+  SHOW calibration database: the parameters of the instrument forward model A, which
+  maps spectral radiance to the L1A detector image, and the L1B output grid. The
+  L1A→L1B inverse B and the instrument line shape B·A are computed from these
+  parameters and the L1B processing settings; they are not stored.
+
+model:
+  forward: |
+    The signal of detector pixel (y, x), in counts, for an image with exposure
+    time t (from L1A):
+
+      I(y,x) = (t / g) · ε(y,x) · ∫ T(ν) · L(ν) · (dλ/dν) / E(ν)
+                 · [ 1 + V(y,x) · C(y,x,ν) ] dν
+
+      C(y,x,ν) = (1 / |P|) ∬_P cos( 2π (ν − σ(v)) · s(ν) · d(u,v)
+                                   + φ(u,v) + ψ(ν) ) du dv
+
+    where
+      L(ν)    spectral radiance [W m-2 sr-1 nm-1]
+      dλ/dν   1e7 / ν² [nm per cm-1], converting per-nm radiance to per-wavenumber
+      E(ν)    photon energy h·c·ν [J]
+      g       detector_gain [electrons per count]
+      ε       pixel_etendue [m2 sr]
+      T       spectral_transmission
+      V       fringe_visibility
+      d, φ    opd and fringe_phase, defined at pixel corners
+      σ       littrow_wavenumber, defined at row edges
+      s, ψ    fringe_frequency_scale and dispersion_phase, functions of
+              wavenumber only (1 and 0 when absent)
+
+    C is the fringe averaged over the pixel area P, with uniform response across
+    the pixel. u runs across the pixel along pixelcolumn and v along los, each
+    from one edge to the other. d and φ are bilinear between the four corner
+    values and σ is linear between the two row edges. The pixel average therefore includes fringe tilt across the pixel and
+    the variation of OPD and Littrow wavenumber along both detector axes. When d is
+    linear across the pixel, σ and φ are constant, and there is no dispersion
+    (s = 1, ψ = 0), C reduces to sinc((ν − σ)·w) · cos(2π(ν − σ)·d_centre + φ)
+    for a pixel of OPD width w.
+
+    Dispersion is separable: s(ν) stretches the OPD scale (fringe-frequency
+    dispersion from the grating and prisms), and ψ(ν) adds a wavenumber-dependent
+    phase (unequal glass in the two arms). Both are interpolated linearly in
+    wavenumber from dispersion_wavenumber.
+  inverse: |
+    B, for each row, is a linear least-squares inversion of the same
+    pixel-averaged model evaluated at that row's sample_wavenumber, with a DC term
+    and the L1B apodization window applied over the row's OPD. B is a processing
+    choice and is recorded by the L1B apodization attributes. The line shape of
+    each L1B sample is the corresponding row of B·A, so it always matches the
+    processing that produced the L1B.
+
+dimensions:
+  los:
+    description: Detector row; matches los in L1A.
+  los_edge:
+    description: Detector row boundaries; len(los) + 1.
+  pixelcolumn:
+    description: Detector column; matches pixelcolumn in L1A.
+  pixelcolumn_edge:
+    description: Detector column boundaries; len(pixelcolumn) + 1.
+  spectral_sample:
+    description: L1B spectral sample; matches spectral_sample in L1B.
+  dispersion_wavenumber:
+    coordinate: true
+    description: Grid on which the dispersion functions are tabulated.
+  transmission_wavenumber:
+    coordinate: true
+    description: Grid on which spectral_transmission is tabulated.
+
+attributes:
+  schema_version:
+    dtype: str
+    required: true
+    role: processing
+    description: Version of this schema the database conforms to.
+
+  valid_from:
+    dtype: str
+    required: true
+    role: processing
+    description: >
+      Start of the period this calibration applies to, as an ISO 8601 UTC
+      timestamp.
+
+  valid_to:
+    dtype: str
+    required: false
+    role: processing
+    description: >
+      End of the period this calibration applies to, as an ISO 8601 UTC timestamp.
+      Absent means open-ended.
+
+variables:
+  # ------------------------------------------------------------- fringe geometry
+  opd:
+    dims: [los_edge, pixelcolumn_edge]
+    dtype: float
+    units: cm
+    required: true
+    role: instrument
+    description: >
+      Optical path difference at each pixel corner, relative to zero path
+      difference. Need not be uniformly spaced.
+
+  fringe_phase:
+    dims: [los_edge, pixelcolumn_edge]
+    dtype: float
+    units: rad
+    required: false
+    default: 0.0
+    role: instrument
+    description: Fringe phase offset at each pixel corner.
+
+  littrow_wavenumber:
+    dims: [los_edge]
+    dtype: float
+    units: cm-1
+    required: true
+    valid_min: 0
+    role: instrument
+    description: Littrow (heterodyne) vacuum wavenumber at each row boundary.
+
+  fringe_visibility:
+    dims: [los, pixelcolumn]
+    dtype: float
+    units: "1"
+    required: false
+    default: 1.0
+    valid_min: 0
+    valid_max: 1
+    role: instrument
+    description: >
+      Intrinsic fringe contrast of each pixel. Excludes the loss from averaging
+      over the pixel area, which the model computes.
+
+  # ----------------------------------------------------------------- dispersion
+  fringe_frequency_scale:
+    dims: [dispersion_wavenumber]
+    dtype: float
+    units: "1"
+    required: false
+    default: 1.0
+    valid_min: 0
+    role: instrument
+    description: >
+      s(ν): factor multiplying the OPD scale at each wavenumber, describing
+      fringe-frequency dispersion. Equal to 1 at dispersion_reference_wavenumber.
+
+  dispersion_phase:
+    dims: [dispersion_wavenumber]
+    dtype: float
+    units: rad
+    required: false
+    default: 0.0
+    role: instrument
+    description: >
+      ψ(ν): wavenumber-dependent fringe phase common to all pixels. Zero, with
+      zero slope, at dispersion_reference_wavenumber.
+
+  dispersion_wavenumber:
+    dims: [dispersion_wavenumber]
+    dtype: float
+    units: cm-1
+    required: false
+    valid_min: 0
+    role: instrument
+    description: Vacuum wavenumbers at which the dispersion functions are tabulated.
+
+  dispersion_reference_wavenumber:
+    dims: []
+    dtype: float
+    units: cm-1
+    required: false
+    valid_min: 0
+    role: instrument
+    description: >
+      Wavenumber at which the dispersion functions are pinned (see the
+      dispersion-reference constraint), for example the band centre.
+
+  # ----------------------------------------------------------------- radiometry
+  pixel_etendue:
+    dims: [los, pixelcolumn]
+    dtype: float
+    units: m2 sr
+    required: true
+    valid_min: 0
+    role: instrument
+    description: >
+      Effective etendue of each pixel, including the interferometer port fraction,
+      the flat field, and the wavenumber-independent part of the system efficiency.
+
+  spectral_transmission:
+    dims: [transmission_wavenumber]
+    dtype: float
+    units: "1"
+    required: true
+    valid_min: 0
+    valid_max: 1
+    role: instrument
+    description: >
+      Wavenumber-dependent throughput: filter transmission times the spectral
+      shape of the optics and detector quantum efficiency. Zero outside the
+      tabulated range.
+
+  transmission_wavenumber:
+    dims: [transmission_wavenumber]
+    dtype: float
+    units: cm-1
+    required: true
+    valid_min: 0
+    role: instrument
+    description: Vacuum wavenumbers at which spectral_transmission is tabulated.
+
+  # ------------------------------------------------------------------- detector
+  detector_gain:
+    dims: []
+    dtype: float
+    units: "1"
+    required: true
+    valid_min: 0
+    role: instrument
+    description: >
+      Electrons per count. Converts L1A `image` to electrons for the shot-noise
+      estimate and sets the quantization noise.
+
+  detector_read_noise:
+    dims: []
+    dtype: float
+    units: "1"
+    required: true
+    valid_min: 0
+    role: instrument
+    description: RMS read noise per exposure, in electrons.
+
+  detector_full_well:
+    dims: []
+    dtype: float
+    units: "1"
+    required: false
+    valid_min: 0
+    role: instrument
+    description: Full-well capacity, in electrons.
+
+  detector_adc_bits:
+    dims: []
+    dtype: int
+    units: "1"
+    required: false
+    valid_min: 1
+    role: instrument
+    description: ADC resolution.
+
+  dead_time:
+    dims: []
+    dtype: float
+    units: s
+    required: false
+    valid_min: 0
+    role: instrument
+    description: Dead time between consecutive exposures.
+
+  # ---------------------------------------------------------- L1B output grid
+  sample_wavenumber:
+    dims: [los, spectral_sample]
+    dtype: float
+    units: cm-1
+    required: true
+    valid_min: 0
+    role: instrument
+    description: >
+      Vacuum wavenumber of each L1B spectral sample for each row. Becomes
+      `wavenumber` in L1B.
+
+constraints:
+  - id: edge-lengths
+    rule: >
+      len(los_edge) = len(los) + 1 and len(pixelcolumn_edge) = len(pixelcolumn) + 1,
+      and los and pixelcolumn match the L1A granules processed with this database.
+  - id: opd-monotonic
+    rule: opd is finite and strictly monotonic along pixelcolumn_edge at every row edge.
+  - id: transmission-covers-samples
+    rule: >
+      transmission_wavenumber spans every sample_wavenumber, and
+      spectral_transmission is greater than 0 at every sample.
+  - id: samples-increasing
+    rule: sample_wavenumber is strictly increasing along spectral_sample in every row.
+  - id: samples-off-dc
+    rule: >
+      In every row, no sample_wavenumber lies within half a sample spacing of the
+      row's Littrow wavenumber; that sample cannot be separated from the DC term.
+  - id: samples-one-sided
+    rule: >
+      In every row, all samples lie on the same side of the Littrow wavenumber;
+      samples at ±Δ alias onto the same fringe frequency.
+  - id: dispersion-complete
+    rule: >
+      If fringe_frequency_scale or dispersion_phase is present, then
+      dispersion_wavenumber and dispersion_reference_wavenumber are also present.
+  - id: dispersion-covers-band
+    rule: >
+      dispersion_wavenumber spans every sample_wavenumber and every
+      transmission_wavenumber where spectral_transmission is greater than 0.
+  - id: dispersion-reference
+    rule: >
+      At dispersion_reference_wavenumber, fringe_frequency_scale = 1,
+      dispersion_phase = 0, and the slope of dispersion_phase is 0. Without these,
+      a constant ψ is indistinguishable from a shift of fringe_phase, a linear ψ
+      from an offset of opd, and an overall scale on s from a scale on opd.
+  - id: invertible
+    rule: >
+      For every row, the pixel-averaged model evaluated at sample_wavenumber
+      (including the DC term) has full column rank and a condition number below a
+      threshold set by the validator. This replaces the uniform-grid requirements.
+
+open_questions: []
