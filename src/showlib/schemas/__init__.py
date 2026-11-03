@@ -44,16 +44,32 @@ def load_schema(product: str) -> dict:
     return yaml.safe_load(text)
 
 
-def validate(data: xr.Dataset, product: str) -> list[Issue]:
+def validate(data: xr.Dataset | xr.DataTree, product: str) -> list[Issue]:
     """Check ``data`` against the schema for ``product``.
 
-    Returns every problem found. Errors mean the data does not conform; warnings
-    flag variables the schema does not define.
+    Pass a DataTree to also check netCDF groups. Returns every problem found.
+    Errors mean the data does not conform; warnings flag variables and groups the
+    schema does not define.
     """
-    return _check_group(data, load_schema(product), prefix="")
+    schema = load_schema(product)
+    if not isinstance(data, xr.DataTree):
+        return _check_group(data, schema, prefix="")
+
+    issues = _check_group(data.to_dataset(inherit=False), schema, prefix="")
+    groups = schema.get("groups", {})
+    for name, child in data.children.items():
+        if name in groups:
+            issues += _check_group(
+                child.to_dataset(inherit=False), groups[name], prefix=f"groups.{name}."
+            )
+        else:
+            issues.append(
+                Issue("warning", f"groups.{name}", "not defined in the schema")
+            )
+    return issues
 
 
-def check(data: xr.Dataset, product: str) -> None:
+def check(data: xr.Dataset | xr.DataTree, product: str) -> None:
     """Raise SchemaValidationError if ``data`` has any schema errors."""
     errors = [issue for issue in validate(data, product) if issue.severity == "error"]
     if errors:

@@ -129,3 +129,38 @@ def test_dataset_still_valid_after_netcdf_round_trip(product, request, tmp_path)
     request.getfixturevalue(product).to_netcdf(path)
     with xr.open_dataset(path) as ds:
         assert validate(ds, product) == []
+
+
+def _tree(root, **groups):
+    return xr.DataTree.from_dict({"/": root, **{f"/{k}": v for k, v in groups.items()}})
+
+
+def test_valid_group(l1a, l1a_simulation):
+    assert validate(_tree(l1a, simulation=l1a_simulation), "l1a") == []
+
+
+def test_root_of_tree_is_checked(l1a, l1a_simulation):
+    tree = _tree(l1a.drop_vars("image"), simulation=l1a_simulation)
+    assert _locations(validate(tree, "l1a")) == {"variables.image"}
+
+
+def test_group_variable_error_is_located_in_group(l1a, l1a_simulation):
+    l1a_simulation["image_noiseless"].attrs["units"] = "electron"
+    tree = _tree(l1a, simulation=l1a_simulation)
+    assert _locations(validate(tree, "l1a")) == {
+        "groups.simulation.variables.image_noiseless"
+    }
+
+
+def test_unknown_group_is_a_warning(l1b, l1a_simulation):
+    issues = validate(_tree(l1b, simulation=l1a_simulation), "l1b")
+    assert [(issue.severity, issue.location) for issue in issues] == [
+        ("warning", "groups.simulation")
+    ]
+
+
+def test_tree_still_valid_after_netcdf_round_trip(l1a, l1a_simulation, tmp_path):
+    path = tmp_path / "l1a.nc"
+    _tree(l1a, simulation=l1a_simulation).to_netcdf(path)
+    with xr.open_datatree(path) as tree:
+        assert validate(tree, "l1a") == []
