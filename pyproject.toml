@@ -12,6 +12,7 @@ dependencies = [
     "netcdf4",
     "numpy",
     "pandas",
+    "pyyaml",
     "sasktran2[hapi]",
     "scipy",
     "skretrieval>=2026.10.0",

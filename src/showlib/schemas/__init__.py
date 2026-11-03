@@ -1,0 +1,176 @@
+"""Validate SHOW data products against the YAML schemas in this package."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import cache
+from importlib import resources
+from typing import Literal
+
+import numpy as np
+import xarray as xr
+import yaml
+
+PRODUCTS = ("l1a", "l1b", "cal_db")
+
+# numpy dtype kinds accepted for each schema dtype
+_DTYPE_KINDS = {"float": "f", "int": "iu", "bool": "b", "datetime": "M", "str": "UOS"}
+
+
+@dataclass(frozen=True)
+class Issue:
+    severity: Literal["error", "warning"]
+    location: str
+    message: str
+
+    def __str__(self) -> str:
+        return f"{self.severity}: {self.location}: {self.message}"
+
+
+class SchemaValidationError(ValueError):
+    def __init__(self, product: str, issues: list[Issue]):
+        self.issues = issues
+        details = "\n".join(f"  {issue}" for issue in issues)
+        super().__init__(f"Data does not conform to the {product} schema:\n{details}")
+
+
+@cache
+def load_schema(product: str) -> dict:
+    """Load the schema for ``product`` (one of ``PRODUCTS``)."""
+    if product not in PRODUCTS:
+        msg = f"Unknown product {product!r}; expected one of {PRODUCTS}"
+        raise ValueError(msg)
+    text = resources.files(__name__).joinpath(f"{product}.yaml").read_text("utf-8")
+    return yaml.safe_load(text)
+
+
+def validate(data: xr.Dataset, product: str) -> list[Issue]:
+    """Check ``data`` against the schema for ``product``.
+
+    Returns every problem found. Errors mean the data does not conform; warnings
+    flag variables the schema does not define.
+    """
+    return _check_group(data, load_schema(product), prefix="")
+
+
+def check(data: xr.Dataset, product: str) -> None:
+    """Raise SchemaValidationError if ``data`` has any schema errors."""
+    errors = [issue for issue in validate(data, product) if issue.severity == "error"]
+    if errors:
+        raise SchemaValidationError(product, errors)
+
+
+def _check_group(ds: xr.Dataset, spec: dict, prefix: str) -> list[Issue]:
+    issues = []
+    variables = spec.get("variables", {})
+
+    for name, field in variables.items():
+        location = f"{prefix}variables.{name}"
+        if name in ds.variables:
+            issues += _field_issues(ds[name].variable, field, location)
+        elif _is_required(ds, field):
+            issues.append(Issue("error", location, "required variable is missing"))
+
+    for name, field in spec.get("attributes", {}).items():
+        location = f"{prefix}attributes.{name}"
+        if name in ds.attrs:
+            issues += _field_issues(ds.attrs[name], field, location)
+        elif _is_required(ds, field):
+            issues.append(Issue("error", location, "required attribute is missing"))
+
+    issues += [
+        Issue("warning", f"{prefix}variables.{name}", "not defined in the schema")
+        for name in ds.variables
+        if name not in variables
+    ]
+    return issues
+
+
+def _is_required(ds: xr.Dataset, field: dict) -> bool:
+    if field.get("required", False):
+        return True
+    conditions = field.get("required_when")
+    return bool(conditions) and all(
+        _lookup(ds, name) == value for name, value in conditions.items()
+    )
+
+
+def _lookup(ds: xr.Dataset, name: str):
+    """Value of a scalar variable or a global attribute, or None."""
+    if name in ds.variables and ds[name].size == 1:
+        return ds[name].item()
+    return ds.attrs.get(name)
+
+
+def _field_issues(value, field: dict, location: str) -> list[Issue]:
+    """Check a variable (xr.Variable) or an attribute value against its field spec."""
+    if isinstance(value, xr.Variable):
+        problems = _variable_shape_problems(value, field)
+        values = value.values
+    else:
+        problems = _attribute_type_problems(value, field)
+        values = np.asarray(value)
+
+    if not problems:
+        problems += _range_problems(values, field)
+        problems += _allowed_problems(values, field)
+    return [Issue("error", location, problem) for problem in problems]
+
+
+def _variable_shape_problems(var: xr.Variable, field: dict) -> list[str]:
+    problems = []
+
+    expected_dims = tuple(field["dims"])
+    if var.dims != expected_dims:
+        problems.append(f"dims are {var.dims}, expected {expected_dims}")
+
+    if var.dtype.kind not in _DTYPE_KINDS[field["dtype"]]:
+        problems.append(f"dtype is {var.dtype}, expected {field['dtype']}")
+
+    if "units" in field:
+        units = var.attrs.get("units")
+        if units is None:
+            problems.append(f"units attribute is missing, expected {field['units']!r}")
+        elif units != field["units"]:
+            problems.append(f"units are {units!r}, expected {field['units']!r}")
+
+    return problems
+
+
+def _attribute_type_problems(value, field: dict) -> list[str]:
+    dtype = field["dtype"]
+    is_bool = isinstance(value, bool | np.bool_)
+    matches = {
+        "str": isinstance(value, str),
+        "float": isinstance(value, int | float | np.integer | np.floating)
+        and not is_bool,
+        "int": isinstance(value, int | np.integer) and not is_bool,
+        "bool": is_bool,
+    }.get(dtype, False)
+    if matches:
+        return []
+    return [f"value {value!r} is not of type {dtype}"]
+
+
+def _range_problems(values: np.ndarray, field: dict) -> list[str]:
+    if values.dtype.kind not in "fiu" or values.size == 0:
+        return []
+    finite = values[~np.isnan(values)] if values.dtype.kind == "f" else values
+    if finite.size == 0:
+        return []
+
+    problems = []
+    if "valid_min" in field and finite.min() < field["valid_min"]:
+        problems.append(f"minimum {finite.min()} is below {field['valid_min']}")
+    if "valid_max" in field and finite.max() > field["valid_max"]:
+        problems.append(f"maximum {finite.max()} is above {field['valid_max']}")
+    return problems
+
+
+def _allowed_problems(values: np.ndarray, field: dict) -> list[str]:
+    if "allowed" not in field:
+        return []
+    unexpected = sorted(set(np.ravel(values).tolist()) - set(field["allowed"]))
+    if unexpected:
+        return [f"values {unexpected} are not in {field['allowed']}"]
+    return []
