@@ -11,6 +11,8 @@ import numpy as np
 import xarray as xr
 import yaml
 
+from showlib.schemas._constraints import CONSTRAINT_CHECKS, DEFERRED_CONSTRAINTS
+
 PRODUCTS = ("l1a", "l1b", "cal_db")
 
 # numpy dtype kinds accepted for each schema dtype
@@ -44,18 +46,30 @@ def load_schema(product: str) -> dict:
     return yaml.safe_load(text)
 
 
-def validate(data: xr.Dataset | xr.DataTree, product: str) -> list[Issue]:
+def validate(
+    data: xr.Dataset | xr.DataTree, product: str, *, cal_db: xr.Dataset | None = None
+) -> list[Issue]:
     """Check ``data`` against the schema for ``product``.
 
-    Pass a DataTree to also check netCDF groups. Returns every problem found.
-    Errors mean the data does not conform; warnings flag variables and groups the
-    schema does not define.
+    Pass a DataTree to also check netCDF groups. Pass ``cal_db`` to also check
+    constraints against the calibration database. Constraints listed in
+    DEFERRED_CONSTRAINTS are not checked. Returns every problem found. Errors mean
+    the data does not conform; warnings flag variables and groups the schema does
+    not define.
     """
     schema = load_schema(product)
-    if not isinstance(data, xr.DataTree):
-        return _check_group(data, schema, prefix="")
+    is_tree = isinstance(data, xr.DataTree)
+    root = data.to_dataset(inherit=False) if is_tree else data
 
-    issues = _check_group(data.to_dataset(inherit=False), schema, prefix="")
+    issues = _check_group(root, schema, prefix="")
+    for constraint_id, constraint_check in CONSTRAINT_CHECKS.get(product, {}).items():
+        issues += [
+            Issue("error", f"constraints.{constraint_id}", problem)
+            for problem in constraint_check(root, cal_db)
+        ]
+    if not is_tree:
+        return issues
+
     groups = schema.get("groups", {})
     for name, child in data.children.items():
         if name in groups:
@@ -69,9 +83,12 @@ def validate(data: xr.Dataset | xr.DataTree, product: str) -> list[Issue]:
     return issues
 
 
-def check(data: xr.Dataset | xr.DataTree, product: str) -> None:
+def check(
+    data: xr.Dataset | xr.DataTree, product: str, *, cal_db: xr.Dataset | None = None
+) -> None:
     """Raise SchemaValidationError if ``data`` has any schema errors."""
-    errors = [issue for issue in validate(data, product) if issue.severity == "error"]
+    issues = validate(data, product, cal_db=cal_db)
+    errors = [issue for issue in issues if issue.severity == "error"]
     if errors:
         raise SchemaValidationError(product, errors)
 
