@@ -5,19 +5,19 @@ import logging
 import numpy as np
 import sasktran2 as sk
 import xarray as xr
-from skretrieval.core.lineshape import UserLineShape
 from skretrieval.retrieval.measvec import MeasurementVector, select
 from skretrieval.retrieval.processing import Retrieval
 
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.ancillary import Ancillary
+from showlib.l2.lineshape import SHOWLineShapes
 from showlib.l2.showmodel import SHOWForwardModel
 
 
 def l2_preprocessor(
     l1b_data: L1bDataSet,
     por_data: xr.Dataset,
-    cal_db: xr.Dataset,
+    line_shapes: SHOWLineShapes,
     process_slice=None,
     **kwargs,
 ):
@@ -58,31 +58,13 @@ def l2_preprocessor(
             "ftol": 1e-6,
         }
 
-        def ls_fn(w):
-            if "sample_wavenumber" in cal_db:
-                return UserLineShape(
-                    cal_db.hires_wavenumber.to_numpy(),
-                    cal_db.sel(sample_wavenumber=1e7 / w, method="nearest")[
-                        "ils"
-                    ].to_numpy(),
-                    False,
-                    integration_fraction=0.97,
-                )
-            return UserLineShape(
-                cal_db.hires_wavenumber.to_numpy(),
-                cal_db["ils"].to_numpy(),
-                True,
-                integration_fraction=0.97,
-            )
-
         ret = Retrieval(
             observation=l1b_image,
             forward_model_cfg={
                 "meas": {
                     "kwargs": {
-                        "lineshape_fn": ls_fn,
-                        "spectral_native_coordinate": "wavenumber_cminv",
-                        "model_res_cminv": 0.01,
+                        "line_shapes": line_shapes,
+                        "rows": l1b_image.retrieval_rows(),
                     },
                     "class": SHOWForwardModel,
                 },

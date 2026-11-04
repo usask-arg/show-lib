@@ -1,24 +1,25 @@
 from __future__ import annotations
 
 import logging
+from copy import copy
 from pathlib import Path
 
 import numpy as np
 import sasktran2 as sk
+import skretrieval.retrieval.prior as prior
 import xarray as xr
-from skretrieval.core.lineshape import UserLineShape
 from skretrieval.retrieval.processing import Retrieval
+from skretrieval.retrieval.statevector.constituent import StateVectorElementConstituent
 from skretrieval.util import configure_log
 
+from showlib.cal_db import CalibrationDatabase
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.ancillary import Ancillary
 from showlib.l2.data import L2FileWriter, L2Profile
+from showlib.l2.lineshape import SHOWLineShapes
 from showlib.l2.optical import h2o_optical_property
 from showlib.l2.preprocessor import l2_preprocessor
 from showlib.l2.showmodel import SHOWForwardModel
-import skretrieval.retrieval.prior as prior
-from skretrieval.retrieval.statevector.constituent import StateVectorElementConstituent
-from copy import copy
 
 
 @Retrieval.register_optical_property("h2o")
@@ -104,13 +105,12 @@ def process_l1b_to_l2_file(
     l1b_file: Path, output_folder: Path, cal_db_path: Path, **kwargs
 ):
     # Load in the data
-    cal_db = xr.open_dataset(cal_db_path)
+    cal_db = CalibrationDatabase.from_file(cal_db_path)
     l1b_data = L1bDataSet.from_file(l1b_file)
+    line_shapes = SHOWLineShapes.from_l1b(
+        cal_db, l1b_data, model_res_cminv=kwargs.get("model_res_cminv", 0.01)
+    )
     por_data = xr.open_dataset(l1b_data.l2_por_path)
-
-    if "hires_wavenumber" not in cal_db:
-        # OLD version of the CAL_DB for ER2
-        cal_db = cal_db.rename({"wavenumbers": "hires_wavenumber"})
 
     # And get the output file name
     out_file = output_folder.joinpath(l1b_data.l2_path.stem + ".nc")
@@ -118,7 +118,9 @@ def process_l1b_to_l2_file(
     if not out_file.exists():
         logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
-        writer = L2FileWriter(process_l1b_to_l2(l1b_data, por_data, cal_db, **kwargs))
+        writer = L2FileWriter(
+            process_l1b_to_l2(l1b_data, por_data, line_shapes, **kwargs)
+        )
 
         writer.save(out_file)
 
@@ -126,7 +128,7 @@ def process_l1b_to_l2_file(
 def process_l1b_to_l2(
     l1b_data: L1bDataSet,
     por_data: xr.Dataset,
-    cal_db: xr.Dataset,
+    line_shapes: SHOWLineShapes,
     process_slice=None,
     **kwargs,
 ):
@@ -147,7 +149,12 @@ def process_l1b_to_l2(
         process_slice = range(len(l1b_data.ds.time))
 
     preprocessor_data = l2_preprocessor(
-        l1b_data, por_data, cal_db, process_slice, altitude_grid=altitude_grid, **kwargs
+        l1b_data,
+        por_data,
+        line_shapes,
+        process_slice,
+        altitude_grid=altitude_grid,
+        **kwargs,
     )
 
     upper_bound = kwargs.get("upper_bound", 30000)
@@ -199,32 +206,13 @@ def process_l1b_to_l2(
             "ftol": 1e-6,
         }
 
-        def ls_fn(w):
-            if "sample_wavenumber" in cal_db:
-                return UserLineShape(
-                    cal_db.hires_wavenumber.to_numpy(),
-                    cal_db.sel(sample_wavenumber=1e7 / w, method="nearest")[
-                        "ils"
-                    ].to_numpy(),
-                    False,
-                    integration_fraction=0.97,
-                )
-            return UserLineShape(
-                cal_db.hires_wavenumber.to_numpy(),
-                cal_db["ils"].to_numpy(),
-                True,
-                integration_fraction=0.97,
-            )
-
         ret = Retrieval(
             observation=l1b_image,
             forward_model_cfg={
                 "meas": {
                     "kwargs": {
-                        "lineshape_fn": ls_fn,
-                        "spectral_native_coordinate": "wavenumber_cminv",
-                        "model_res_cminv": kwargs.get("model_res_cminv", 0.01),
-                        "round_decimal": 2,
+                        "line_shapes": line_shapes,
+                        "rows": l1b_image.retrieval_rows(),
                     },
                     "class": SHOWForwardModel,
                 },
