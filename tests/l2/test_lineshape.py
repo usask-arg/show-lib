@@ -151,3 +151,37 @@ def test_from_l1b_rejects_a_different_calibration(make_cal_db):
 
     with pytest.raises(ValueError, match="calibration database"):
         SHOWLineShapes.from_l1b(other, l1b)
+
+
+def test_instrument_model_selects_requested_samples_per_row(make_cal_db):
+    cal_db = _non_ideal_cal_db(make_cal_db)
+    line_shapes = SHOWLineShapes(cal_db, apodization=None, model_res_cminv=0.05)
+    samples = cal_db.sample_wavenumber(0)
+
+    model = line_shapes.instrument_model(rows=[1, 0], sample_wavenumber=samples[[2, 1]])
+
+    np.testing.assert_allclose(model.sample_wavenumber, samples[[1, 2]])
+    np.testing.assert_allclose(model.matrices[0], line_shapes.matrix(1)[[1, 2]])
+    np.testing.assert_allclose(model.matrices[1], line_shapes.matrix(0)[[1, 2]])
+    np.testing.assert_allclose(model.model_wavenumber, line_shapes.model_wavenumber)
+
+
+def test_instrument_model_rejects_unknown_samples(make_cal_db):
+    line_shapes = SHOWLineShapes(
+        CalibrationDatabase(make_cal_db()), apodization=None, model_res_cminv=0.05
+    )
+    with pytest.raises(ValueError, match="sample"):
+        line_shapes.instrument_model(rows=[0], sample_wavenumber=[7000.0])
+
+
+def test_instrument_model_matches_samples_on_a_fine_grid(make_cal_db):
+    """Samples 0.05 cm-1 apart must not be confused with their neighbours."""
+    cal_db = CalibrationDatabase(
+        make_cal_db(num_columns=200, sample_indices=(-4, -3, -2, -1))
+    )
+    line_shapes = SHOWLineShapes(cal_db, apodization=None, model_res_cminv=0.05)
+    samples = cal_db.sample_wavenumber(0)
+
+    model = line_shapes.instrument_model(rows=[0], sample_wavenumber=samples[[2]])
+
+    np.testing.assert_allclose(model.matrices[0], line_shapes.matrix(0)[[2]])

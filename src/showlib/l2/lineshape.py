@@ -10,7 +10,11 @@ import numpy as np
 
 from showlib.cal_db import CalibrationDatabase
 from showlib.l1b.data import L1bDataSet
+from showlib.l2.showmodel import SHOWInstrumentModel
 from showlib.processing.l1a_to_l1b import inverse_operator
+
+# Requested samples come from the L1B grid, so they match to rounding error
+_SAMPLE_MATCH_ATOL_CMINV = 1e-6
 
 
 def instrument_line_shape(
@@ -101,3 +105,28 @@ class SHOWLineShapes:
                 self._cal_db, row, self._model_wavenumber, self._apodization
             )
         return self._matrices[row]
+
+    def instrument_model(self, rows, sample_wavenumber) -> SHOWInstrumentModel:
+        """Instrument model for lines of sight on ``rows``, at the given samples.
+
+        The samples are matched to each row's calibration sample wavenumbers and
+        returned in increasing order.
+        """
+        requested = np.sort(np.asarray(sample_wavenumber, dtype=float))
+        matrices = []
+        for row in rows:
+            available = self._cal_db.sample_wavenumber(row)
+            matches = np.isclose(
+                requested[:, np.newaxis],
+                available[np.newaxis, :],
+                rtol=0,
+                atol=_SAMPLE_MATCH_ATOL_CMINV,
+            )
+            if not np.all(matches.any(axis=1)):
+                missing = requested[~matches.any(axis=1)]
+                msg = f"Row {row} has no calibration sample at wavenumbers {missing}"
+                raise ValueError(msg)
+            matrices.append(self.matrix(row)[np.argmax(matches, axis=1)])
+        return SHOWInstrumentModel(
+            np.stack(matrices), requested, self._model_wavenumber
+        )
