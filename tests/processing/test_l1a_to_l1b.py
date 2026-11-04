@@ -126,6 +126,7 @@ def test_output_is_a_valid_l1b_granule(make_cal_db):
         l1b.ds["tangent_altitude"], l1a.ds["tangent_altitude"]
     )
     np.testing.assert_array_equal(l1b.ds["time"], l1a.ds["time"])
+    np.testing.assert_array_equal(l1b.ds["los"], np.arange(cal_db.num_rows))
 
 
 def test_kaiser_apodization_is_the_default(make_cal_db):

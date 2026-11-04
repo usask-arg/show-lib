@@ -1,5 +1,5 @@
 product: L1B
-schema_version: 0.2.0
+schema_version: 0.3.0
 status: draft
 description: >
   Calibrated radiance spectra, one spectrum per line of sight, with geolocation.
@@ -10,7 +10,10 @@ dimensions:
     coordinate: true
     description: Image within the granule.
   los:
-    description: Line of sight; one per L1A detector row.
+    coordinate: true
+    description: >
+      Line of sight. Its coordinate is the detector row, so it stays correct when
+      rows are subset.
   spectral_sample:
     description: >
       Spectral sample, in increasing wavenumber. The wavenumber of each sample is
@@ -53,6 +56,17 @@ attributes:
     description: Which noise sources contributed to radiance_noise.
 
 variables:
+  los:
+    dims: [los]
+    dtype: int
+    units: "1"
+    required: true
+    valid_min: 0
+    role: geometry
+    description: >
+      Detector row of each line of sight; indexes los in L1A and in the
+      calibration database.
+
   # ----------------------------------------------------------- spectral axis
   wavenumber:
     dims: [los, spectral_sample]
@@ -202,6 +216,8 @@ variables:
 constraints:
   - id: time-increasing
     rule: time is strictly increasing within a granule.
+  - id: los-rows
+    rule: los is strictly increasing, so each detector row appears at most once.
   - id: wavenumber-increasing
     rule: wavenumber is strictly increasing along spectral_sample for every los.
   - id: uniform-processing

@@ -61,6 +61,14 @@ def _detector_matches_calibration(ds, cal_db):
     ]
 
 
+def _los_rows(ds, _cal_db):
+    if not _has(ds, "los") or ds["los"].ndim != 1:
+        return []
+    if np.all(np.diff(ds["los"].to_numpy()) > 0):
+        return []
+    return ["los is not strictly increasing"]
+
+
 def _wavenumber_increasing(ds, _cal_db):
     if not _has(ds, "wavenumber"):
         return []
@@ -234,6 +242,7 @@ CONSTRAINT_CHECKS: dict[str, dict[str, Check]] = {
     },
     "l1b": {
         "time-increasing": _time_increasing,
+        "los-rows": _los_rows,
         "wavenumber-increasing": _wavenumber_increasing,
         "finite-values": _all_finite("radiance", "radiance_noise"),
     },

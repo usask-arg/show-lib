@@ -61,6 +61,11 @@ def test_l1b_time_not_increasing(l1b):
     assert _constraint_failures(validate(l1b, "l1b")) == {"time-increasing"}
 
 
+def test_l1b_los_rows_not_increasing(l1b):
+    l1b = l1b.assign_coords(los=[0, 2, 2])
+    assert _constraint_failures(validate(l1b, "l1b")) == {"los-rows"}
+
+
 def test_l1b_wavenumber_not_increasing(l1b):
     l1b = l1b.isel(spectral_sample=[1, 0, 2, 3])
     assert _constraint_failures(validate(l1b, "l1b")) == {"wavenumber-increasing"}

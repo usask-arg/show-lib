@@ -38,17 +38,21 @@ class L1bImage(Observation):
         los_azimuth_angle: np.ndarray,
         processing: dict,
         saturated_fraction: np.ndarray | None = None,
+        detector_rows: np.ndarray | None = None,
     ):
         """Build an image from arrays.
 
         radiance, radiance_noise, and wavenumber have shape (los, spectral_sample);
         a one-dimensional wavenumber is shared by every line of sight. processing
         holds the L1B processing attributes (apodization_window, ...).
+        detector_rows defaults to 0, 1, 2, ...
         """
         spectral_dims = ["los", "spectral_sample"]
         radiance = np.asarray(radiance, dtype=float)
         if saturated_fraction is None:
             saturated_fraction = np.zeros(radiance.shape[0])
+        if detector_rows is None:
+            detector_rows = np.arange(radiance.shape[0])
 
         ds = xr.Dataset(
             {
@@ -67,6 +71,7 @@ class L1bImage(Observation):
             },
             coords={
                 "time": np.datetime64(time, "ns"),
+                "los": np.asarray(detector_rows, dtype=np.int64),
                 "wavenumber": (
                     spectral_dims,
                     np.broadcast_to(wavenumber, radiance.shape).copy(),
@@ -105,6 +110,10 @@ class L1bImage(Observation):
             msg = "No unsaturated L1B rows remain within the retrieval altitude range"
             raise ValueError(msg)
         return mask
+
+    def retrieval_rows(self) -> np.ndarray:
+        """Detector row of each line of sight used in the retrieval."""
+        return self._ds["los"].to_numpy()[self._retrieval_los_mask()]
 
     def sk2_geometry(self) -> dict[sk.ViewingGeometry]:
         viewing_geo = sk.ViewingGeometry()
@@ -185,7 +194,10 @@ class L1bImage(Observation):
                 self._ds[name].to_numpy()[np.ix_(good_alt, good)].T,
                 dims=["wavenumber", "los"],
             )
-        ds["tangent_altitude"] = self._ds["tangent_altitude"][good_alt]
+        ds["tangent_altitude"] = (
+            ["los"],
+            self._ds["tangent_altitude"].to_numpy()[good_alt],
+        )
         ds.coords["wavenumber"] = wvnum[good]
 
         return {"meas": RadianceGridded(ds)}

@@ -124,6 +124,7 @@ def process_l1a_to_l1b(
         },
         coords={
             "time": ds["time"],
+            "los": np.arange(ds.sizes["los"]),
             "wavenumber": cal_db.ds["sample_wavenumber"].variable,
         },
         attrs=attrs,

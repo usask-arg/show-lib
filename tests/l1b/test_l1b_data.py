@@ -56,6 +56,12 @@ def test_from_np_arrays_layout():
     assert float(ds["spacecraft_altitude"]) == 20000.0
     np.testing.assert_array_equal(ds["saturated_fraction"], 0.0)
     assert ds.attrs == PROCESSING
+    np.testing.assert_array_equal(ds["los"], np.arange(NUM_LOS))
+
+
+def test_from_np_arrays_detector_rows():
+    ds = _l1b_image(detector_rows=np.array([3, 5, 7, 9, 11])).ds
+    np.testing.assert_array_equal(ds["los"], [3, 5, 7, 9, 11])
 
 
 def test_skretrieval_l1_wavenumber_grid():
@@ -70,6 +76,12 @@ def test_skretrieval_l1_wavenumber_grid():
 def test_skretrieval_l1_passes_large_radiances_through_unchanged():
     l1 = _l1b_image(radiance_value=1e12).skretrieval_l1()["meas"].data
     np.testing.assert_array_equal(l1["radiance"], 1e12)
+
+
+def test_skretrieval_l1_has_no_los_coordinate():
+    """Model output has no los coordinate, so the measurement must not either."""
+    l1 = _l1b_image().skretrieval_l1()["meas"].data
+    assert "los" not in l1.coords
 
 
 def test_skretrieval_l1_filters():
@@ -154,6 +166,11 @@ def test_granule_image_selection():
     assert isinstance(image, L1bImage)
     np.testing.assert_array_equal(image.ds.tangent_altitude, [5000.0, 15000.0, 25000.0])
     assert image.ds["time"] == np.datetime64("2023-11-28T17:00:01")
+
+
+def test_retrieval_rows_follow_subsetting_and_masks():
+    image = _granule().image(1, row_reduction=2, low_alt=10000, high_alt=100000)
+    np.testing.assert_array_equal(image.retrieval_rows(), [2, 4])
 
 
 def test_granule_rejects_different_wavenumber_grids():

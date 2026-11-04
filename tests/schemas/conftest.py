@@ -96,6 +96,7 @@ def l1b() -> xr.Dataset:
         data_vars,
         coords={
             "time": _times(),
+            "los": _var(["los"], np.arange(NUM_LOS), "1"),
             "wavenumber": _var(
                 ["los", "spectral_sample"],
                 np.broadcast_to(wavenumber, (NUM_LOS, NUM_SAMPLES)).copy(),
