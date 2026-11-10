@@ -7,6 +7,23 @@ import xarray as xr
 from showlib.schemas import apply_metadata
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-slow",
+        action="store_true",
+        help="run end-to-end tests that execute SASKTRAN2 retrievals",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    if config.getoption("--run-slow"):
+        return
+    skip = pytest.mark.skip(reason="slow; run with --run-slow")
+    for item in items:
+        if "slow" in item.keywords:
+            item.add_marker(skip)
+
+
 def _cal_db(
     num_rows: int = 2,
     num_columns: int = 16,

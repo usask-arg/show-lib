@@ -46,6 +46,9 @@ minversion = "6.0"
 addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config"]
 xfail_strict = true
 testpaths = ["tests"]
+markers = [
+    "slow: end-to-end tests that run SASKTRAN2 retrievals; run with --run-slow",
+]
 
 [tool.ruff]
 src = ["src"]
