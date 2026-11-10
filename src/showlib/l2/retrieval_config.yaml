@@ -97,9 +97,12 @@ retrieval:
         scale_factor: 1
         retrieved_quantities:
           extinction_per_m:
-            prior_influence: 1.0e-4      # regularized towards the preprocessor's aerosol
-            tikh_factor: 1.0e-1
-            min_value: 0
+            # Pinned to the preprocessor's aerosol. Retrieving it with the earlier
+            # weights (prior_influence 1e-4, tikh_factor 1e-1, min_value 0) made the
+            # self-consistency retrieval much worse; not yet understood.
+            prior_influence: 1.0e+6
+            tikh_factor: 0
+            min_value: -1.0e-3
             max_value: 1.0e-3
         prior:
           extinction_per_m: {type: testing}
