@@ -75,6 +75,9 @@ preprocessor:
 
 # Stage 2: the H2O retrieval over all samples
 retrieval:
+  # Use the L1B noise correlation between samples (from apodization) by whitening
+  # each line of sight; false treats the samples as independent
+  noise_correlation: true
   engine:
     wavelength_batch_size: 128
   state:

@@ -71,6 +71,7 @@ class SHOWLineShapes:
             passband.min(), passband.max() + model_res_cminv / 2, model_res_cminv
         )
         self._matrices: dict[int, np.ndarray] = {}
+        self._correlations: dict[int, np.ndarray] = {}
 
     @classmethod
     def from_l1b(
@@ -94,6 +95,10 @@ class SHOWLineShapes:
         return cls(cal_db, apodization_from_attrs(l1b.ds.attrs), model_res_cminv)
 
     @property
+    def cal_db(self) -> CalibrationDatabase:
+        return self._cal_db
+
+    @property
     def model_wavenumber(self) -> np.ndarray:
         """Model wavenumbers [cm-1], increasing."""
         return self._model_wavenumber
@@ -113,20 +118,44 @@ class SHOWLineShapes:
         returned in increasing order.
         """
         requested = np.sort(np.asarray(sample_wavenumber, dtype=float))
-        matrices = []
-        for row in rows:
-            available = self._cal_db.sample_wavenumber(row)
-            matches = np.isclose(
-                requested[:, np.newaxis],
-                available[np.newaxis, :],
-                rtol=0,
-                atol=_SAMPLE_MATCH_ATOL_CMINV,
-            )
-            if not np.all(matches.any(axis=1)):
-                missing = requested[~matches.any(axis=1)]
-                msg = f"Row {row} has no calibration sample at wavenumbers {missing}"
-                raise ValueError(msg)
-            matrices.append(self.matrix(row)[np.argmax(matches, axis=1)])
+        matrices = [
+            self.matrix(row)[self._sample_indices(row, requested)] for row in rows
+        ]
         return SHOWInstrumentModel(
             np.stack(matrices), requested, self._model_wavenumber
         )
+
+    def noise_correlation(self, row: int, sample_wavenumber=None) -> np.ndarray:
+        """Correlation of L1B radiance noise between the samples of one row.
+
+        L1A→L1B maps pixel noise to radiance through B, so the covariance is
+        B·diag(pixel variance)·Bᵀ. Pixel variances are taken as equal across the
+        row, which makes the correlation depend only on B. ``sample_wavenumber``
+        selects samples (in the given order); the default is all of them.
+        """
+        if row not in self._correlations:
+            operator = inverse_operator(self._cal_db, row, self._apodization)
+            covariance = operator @ operator.T
+            sigma = np.sqrt(np.diag(covariance))
+            self._correlations[row] = covariance / np.outer(sigma, sigma)
+        correlation = self._correlations[row]
+        if sample_wavenumber is None:
+            return correlation
+        index = self._sample_indices(row, sample_wavenumber)
+        return correlation[np.ix_(index, index)]
+
+    def _sample_indices(self, row: int, sample_wavenumber) -> np.ndarray:
+        """Index of each requested wavenumber among the row's calibration samples."""
+        requested = np.asarray(sample_wavenumber, dtype=float)
+        available = self._cal_db.sample_wavenumber(row)
+        matches = np.isclose(
+            requested[:, np.newaxis],
+            available[np.newaxis, :],
+            rtol=0,
+            atol=_SAMPLE_MATCH_ATOL_CMINV,
+        )
+        if not np.all(matches.any(axis=1)):
+            missing = requested[~matches.any(axis=1)]
+            msg = f"Row {row} has no calibration sample at wavenumbers {missing}"
+            raise ValueError(msg)
+        return np.argmax(matches, axis=1)

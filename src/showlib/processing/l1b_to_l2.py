@@ -18,6 +18,7 @@ from showlib.l2.ancillary import Ancillary
 from showlib.l2.config import altitude_grid, engine_kwargs, load_retrieval_config
 from showlib.l2.data import L2FileWriter, L2Profile
 from showlib.l2.lineshape import SHOWLineShapes
+from showlib.l2.noise import whitened_measurement_vector
 from showlib.l2.optical import h2o_optical_property
 from showlib.l2.preprocessor import l2_preprocessor
 from showlib.l2.showmodel import SHOWForwardModel
@@ -196,6 +197,14 @@ def process_l1b_to_l2(
         state_kwargs["splines"]["constant_los"]["high_wavelength_nm"] = 1e7 / min_wv
         state_kwargs["altitude_grid"] = grid
 
+        measvec = None
+        if config["retrieval"]["noise_correlation"]:
+            measvec = {
+                "measurement": whitened_measurement_vector(
+                    skl1["meas"].data, line_shapes, l1b_image.retrieval_rows()
+                )
+            }
+
         ret = Retrieval(
             observation=l1b_image,
             forward_model_cfg={
@@ -213,6 +222,7 @@ def process_l1b_to_l2(
             model_kwargs=engine_kwargs(config, "retrieval"),
             minimizer_kwargs=dict(config["minimizer"]),
             target_kwargs={},
+            measvec=measvec,
             state_kwargs=state_kwargs,
         )
 

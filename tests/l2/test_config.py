@@ -35,6 +35,10 @@ def test_main_retrieval_retrieves_aerosol():
     assert extinction["min_value"] == 0
 
 
+def test_noise_correlation_is_on_by_default():
+    assert load_retrieval_config(REQUIRED)["retrieval"]["noise_correlation"] is True
+
+
 def test_overrides_are_merged_into_the_defaults():
     config = load_retrieval_config({**REQUIRED, "minimizer": {"max_nfev": 50}})
     assert config["minimizer"]["max_nfev"] == 50
