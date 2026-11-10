@@ -32,10 +32,11 @@ def load_retrieval_config(overrides: dict | str | os.PathLike | None = None) -> 
         overrides = yaml.safe_load(Path(overrides).read_text("utf-8"))
     _merge(config, copy.deepcopy(overrides or {}), path="", free_form=False)
 
-    if config["preprocessor"]["wavenumber_cminv"] is None:
+    wavenumber = config["preprocessor"]["wavenumber_cminv"]
+    if wavenumber != "auto" and not isinstance(wavenumber, int | float):
         msg = (
-            "preprocessor.wavenumber_cminv must be set to a weakly H2O-absorbing "
-            "sample wavenumber in the instrument's band"
+            "preprocessor.wavenumber_cminv must be a weakly H2O-absorbing sample "
+            f"wavenumber in the instrument's band, or 'auto'; got {wavenumber!r}"
         )
         raise ValueError(msg)
     return config

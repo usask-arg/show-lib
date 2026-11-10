@@ -83,13 +83,12 @@ def test_retrieval_runs_end_to_end(tmp_path, caplog, noise_fraction, correlated)
     process_l1a_to_l1b(_l1a(cal_db), cal_db, noise_fraction=noise_fraction).save(
         l1b_path
     )
-    samples = cal_db.sample_wavenumber(0)
     config = load_retrieval_config(
         {
             "model_res_cminv": MODEL_RES_CMINV,
             "observation": {"upper_bound_m": 25e3},
             "minimizer": {"max_nfev": 2},
-            "preprocessor": {"wavenumber_cminv": float(samples[len(samples) // 2])},
+            "preprocessor": {"wavenumber_cminv": "auto"},
         }
     )
     _program_of_record(

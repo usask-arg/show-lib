@@ -111,3 +111,13 @@ def test_loads_a_yaml_file_from_a_string_path(tmp_path):
 def test_a_section_cannot_be_replaced_by_a_single_value():
     with pytest.raises(ValueError, match=r"engine must be a mapping"):
         load_retrieval_config({**REQUIRED, "engine": 8})
+
+
+def test_preprocessor_wavenumber_can_be_automatic():
+    config = load_retrieval_config({"preprocessor": {"wavenumber_cminv": "auto"}})
+    assert config["preprocessor"]["wavenumber_cminv"] == "auto"
+
+
+def test_preprocessor_wavenumber_must_be_a_number_or_auto():
+    with pytest.raises(ValueError, match="auto"):
+        load_retrieval_config({"preprocessor": {"wavenumber_cminv": "window"}})

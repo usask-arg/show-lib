@@ -84,11 +84,9 @@ def test_model_grid_spans_the_transmission(make_cal_db):
     cal_db = CalibrationDatabase(make_cal_db())
     line_shapes = SHOWLineShapes(cal_db, apodization=None, model_res_cminv=0.05)
 
-    grid = line_shapes.model_wavenumber
-    table = cal_db.ds["transmission_wavenumber"].to_numpy()
-    np.testing.assert_allclose(np.diff(grid), 0.05)
-    assert grid[0] == pytest.approx(table.min())
-    assert grid[-1] == pytest.approx(table.max(), abs=0.05)
+    np.testing.assert_array_equal(
+        line_shapes.model_wavenumber, cal_db.model_wavenumber(resolution_cminv=0.05)
+    )
 
 
 def test_matrices_are_cached_per_row(make_cal_db):

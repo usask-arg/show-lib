@@ -25,16 +25,36 @@ from showlib.l2.retrieval import (  # noqa: F401  (old names, still importable h
 from showlib.l2.showmodel import SHOWForwardModel
 
 
+def retrieve_l2(
+    l1b: L1bDataSet,
+    por: xr.Dataset,
+    cal_db: CalibrationDatabase,
+    config: dict,
+    process_slice=None,
+) -> list[L2Profile]:
+    """Retrieve H2O for images of an in-memory L1B granule.
+
+    Builds the line shapes once for the granule. ``por`` is the program of record
+    (pressure, temperature and tropopause_altitude on altitude, along time, and
+    optionally aerosol_extinction); ``config`` comes from load_retrieval_config.
+    """
+    line_shapes = SHOWLineShapes.from_l1b(
+        cal_db, l1b, model_res_cminv=config["model_res_cminv"]
+    )
+    return process_l1b_to_l2(l1b, por, line_shapes, config, process_slice)
+
+
 def process_l1b_to_l2_file(
     l1b_file: Path, output_folder: Path, cal_db_path: Path, config: dict
 ):
-    """Retrieve every image of an L1B granule; ``config`` from load_retrieval_config."""
+    """Retrieve every image of an L1B granule; ``config`` from load_retrieval_config.
+
+    The program of record and the output are found from the L1B's path (sibling
+    por/ and l2/ folders); retrieve_l2 does the same in memory.
+    """
     # Load in the data
     cal_db = CalibrationDatabase.from_file(cal_db_path)
     l1b_data = L1bDataSet.from_file(l1b_file)
-    line_shapes = SHOWLineShapes.from_l1b(
-        cal_db, l1b_data, model_res_cminv=config["model_res_cminv"]
-    )
     por_data = xr.open_dataset(l1b_data.l2_por_path)
 
     # And get the output file name
@@ -43,9 +63,7 @@ def process_l1b_to_l2_file(
     if not out_file.exists():
         logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
-        writer = L2FileWriter(
-            process_l1b_to_l2(l1b_data, por_data, line_shapes, config)
-        )
+        writer = L2FileWriter(retrieve_l2(l1b_data, por_data, cal_db, config))
 
         writer.save(out_file)
 

@@ -4,15 +4,56 @@ import copy
 import logging
 
 import numpy as np
+import sasktran2 as sk
 import xarray as xr
 from skretrieval.retrieval.measvec import MeasurementVector, select
 
+from showlib.cal_db import CalibrationDatabase
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.ancillary import Ancillary
 from showlib.l2.config import altitude_grid, engine_kwargs
 from showlib.l2.lineshape import SHOWLineShapes
+from showlib.l2.optical import h2o_optical_property
 from showlib.l2.retrieval import SHOWRetrieval
 from showlib.l2.showmodel import SHOWForwardModel
+
+
+def weakest_h2o_sample(
+    cal_db: CalibrationDatabase,
+    row: int = 0,
+    min_transmission: float = 0.5,
+    pressure_pa: float = 12000.0,
+    temperature_k: float = 216.65,
+) -> float:
+    """The in-band sample wavenumber [cm-1] with the least H2O absorption.
+
+    Uses the retrieval's HITRAN H2O cross sections at a lower-stratosphere
+    reference state (by default about 15 km in the US standard atmosphere), among
+    the row's samples where the spectral transmission is at least
+    ``min_transmission``. Suitable for preprocessor.wavenumber_cminv.
+    """
+    samples = cal_db.sample_wavenumber(row)
+    samples = samples[cal_db.spectral_transmission(samples) >= min_transmission]
+    if len(samples) == 0:
+        msg = f"No samples in row {row} have transmission >= {min_transmission}"
+        raise ValueError(msg)
+
+    altitudes = np.array([0.0, 1.0, 2.0])
+    geometry = sk.Geometry1D(
+        0.5,
+        0.0,
+        6372e3,
+        altitudes,
+        sk.InterpolationMethod.LinearInterpolation,
+        sk.GeometryType.Spherical,
+    )
+    atmo = sk.Atmosphere(geometry, sk.Config(), wavelengths_nm=1e7 / samples)
+    atmo.pressure_pa = np.full(len(altitudes), pressure_pa)
+    atmo.temperature_k = np.full(len(altitudes), temperature_k)
+    cross_section = np.asarray(
+        h2o_optical_property().atmosphere_quantities(atmo).extinction
+    )
+    return float(samples[np.argmin(cross_section[0])])
 
 
 def l2_preprocessor(
@@ -26,6 +67,9 @@ def l2_preprocessor(
         process_slice = range(len(l1b_data.ds.time))
 
     wvnum = config["preprocessor"]["wavenumber_cminv"]
+    if wvnum == "auto":
+        wvnum = weakest_h2o_sample(line_shapes.cal_db)
+        logging.info("Preprocessor wavenumber: %.3f cm-1", wvnum)
     low_altitude = config["preprocessor"]["low_altitude"]
     observation = config["observation"]
     upper_bound = observation["upper_bound_m"]

@@ -46,7 +46,9 @@ minimizer:
 # profile, the main retrieval's aerosol prior is that profile instead of this fit;
 # levels outside its altitude range take the floor (floor_fraction_of_peak).
 preprocessor:
-  wavenumber_cminv: null          # required: a weakly H2O-absorbing sample in the band
+  # Required: a weakly H2O-absorbing sample wavenumber in the band, or "auto" to
+  # pick the in-band sample with the least H2O absorption (weakest_h2o_sample)
+  wavenumber_cminv: null
   engine: {}                      # stage-specific additions to `engine`
   low_altitude:
     smoothing_los: 5              # centred rolling mean over lines of sight

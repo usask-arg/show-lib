@@ -65,11 +65,7 @@ class SHOWLineShapes:
         self._cal_db = cal_db
         self._apodization = apodization
 
-        table = cal_db.ds["transmission_wavenumber"].to_numpy()
-        passband = table[cal_db.ds["spectral_transmission"].to_numpy() > 0]
-        self._model_wavenumber = np.arange(
-            passband.min(), passband.max() + model_res_cminv / 2, model_res_cminv
-        )
+        self._model_wavenumber = cal_db.model_wavenumber(model_res_cminv)
         self._matrices: dict[int, np.ndarray] = {}
         self._correlations: dict[int, np.ndarray] = {}
 
