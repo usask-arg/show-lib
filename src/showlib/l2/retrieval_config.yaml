@@ -1,0 +1,116 @@
+# Default settings for the SHOW L1B -> L2 water vapour retrieval.
+#
+# Load with showlib.l2.config.load_retrieval_config, which merges your overrides
+# (a dict or a YAML file with the same layout) into these defaults. Unknown keys
+# are rejected, except inside `state` sections, which are passed to skretrieval's
+# state_kwargs and may hold any key it accepts. Values computed from the data
+# (aerosol prior from the preprocessor, surface and spline wavelengths, number of
+# lines of sight, altitude grid) are filled in by the code.
+
+# Retrieval altitude grid: the union of these ranges (start inclusive, stop exclusive)
+altitude_grid_m:
+  - {start: 0, stop: 9000, step: 1000}
+  - {start: 9000, stop: 35000, step: 500}
+  - {start: 35000, stop: 40000, step: 1000}
+  - {start: 40000, stop: 65001, step: 5000}
+
+# Resolution of the forward model's wavenumber grid
+model_res_cminv: 0.01
+
+# Which lines of sight and samples are used
+observation:
+  upper_bound_m: 30000            # highest tangent altitude used
+  lower_bound_m: null             # lowest tangent altitude; null uses the preprocessor's estimate
+  row_reduction: 1                # use every n-th detector row
+  low_wavenumber_filter_cminv: 0
+  high_wavenumber_filter_cminv: 1.0e+10
+  override_los: false
+
+# SASKTRAN2 engine settings shared by both stages (sasktran2.Config attributes)
+engine:
+  num_threads: 1
+  los_refraction: true
+  multiple_scatter_source: TwoStream   # a sasktran2.MultipleScatterSource name
+  num_streams: 2
+
+# scipy least_squares settings, shared by both stages
+minimizer:
+  method: trf
+  xtol: 1.0e-15
+  include_bounds: true
+  max_nfev: 20
+  ftol: 1.0e-6
+
+# Stage 1: fits aerosol at one sample with H2O held near its prior, and estimates
+# the lowest usable tangent altitude
+preprocessor:
+  wavenumber_cminv: null          # required: a weakly H2O-absorbing sample in the band
+  engine: {}                      # stage-specific additions to `engine`
+  low_altitude:
+    smoothing_los: 5              # centred rolling mean over lines of sight
+    ratio_threshold: 0.1          # rows with |1 - measured/modelled| above this are unusable
+    fallback_m: 8000.0            # used when no row exceeds the threshold
+  state:
+    absorbers:
+      h2o:
+        prior_influence: 1.0e+6
+        tikh_factor: 2.5e+3
+        log_space: false
+        min_value: 0
+        max_value: 1.0e-1
+        prior: {type: mipas, value: 1.0e-6}
+    aerosols:
+      stratospheric_aerosol:
+        type: extinction_profile
+        nominal_wavelength: 1350
+        scale_factor: 1
+        retrieved_quantities:
+          extinction_per_m:
+            prior_influence: 1.0e-1
+            tikh_factor: 1.0e+1
+            min_value: 0
+            max_value: 1.0e-3
+        prior:
+          extinction_per_m: {type: testing}
+
+# Stage 2: the H2O retrieval over all samples
+retrieval:
+  engine:
+    wavelength_batch_size: 128
+  state:
+    absorbers:
+      h2o:
+        prior_influence: 1.0e-2
+        tikh_factor: 2.5e+1
+        log_space: false
+        min_value: 0
+        max_value: 1.0e-1
+        prior: {type: mipas, value: 1.0e-6}
+    aerosols:
+      stratospheric_aerosol:
+        type: extinction_profile_2
+        enabled: true
+        nominal_wavelength: 1350
+        scale_factor: 1
+        retrieved_quantities:
+          extinction_per_m:
+            prior_influence: 1.0e+6
+            tikh_factor: 0
+            min_value: -1.0e-3
+            max_value: 1.0e-3
+        prior:
+          extinction_per_m: {type: testing}
+    surface:
+      lambertian_albedo:
+        prior_influence: 0
+        tikh_factor: 1.0e+6
+        log_space: false
+        initial_value: 0.3
+        out_bounds_mode: extend
+    shifts:
+      wavenumber:
+        type: wavenumber_shift
+    splines:
+      constant_los:
+        num_wv: 2
+        order: 1

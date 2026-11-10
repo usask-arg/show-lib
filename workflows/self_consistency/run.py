@@ -32,6 +32,7 @@ from showlib.cal_db import CalibrationDatabase
 from showlib.cal_db.ideal import ideal_calibration_database
 from showlib.l1a.data import L1ADataSet, L1AImage
 from showlib.l2.ancillary import Ancillary
+from showlib.l2.config import load_retrieval_config
 from showlib.l2.lineshape import SHOWLineShapes
 from showlib.l2.optical import h2o_optical_property
 from showlib.processing.l1a_to_l1b import process_l1a_to_l1b
@@ -215,7 +216,7 @@ def program_of_record() -> xr.Dataset:
 
 
 def main(
-    output_dir: Path, noise_seed: int | None, num_threads: int, **l2_kwargs
+    output_dir: Path, noise_seed: int | None, num_threads: int, config: dict
 ) -> None:
     for folder in ["l1a", "l1b", "por", "l2"]:
         output_dir.joinpath(folder).mkdir(parents=True, exist_ok=True)
@@ -269,8 +270,7 @@ def main(
         l1b_path,
         output_dir / "l2",
         cal_db_path,
-        num_threads=num_threads,
-        **l2_kwargs,
+        config,
     )
 
     with xr.open_dataset(output_dir / "l2" / f"HAWC_H2OL_Wvapor_L2_{NAME}.nc") as l2:
@@ -329,5 +329,10 @@ if __name__ == "__main__":
         args.output_dir,
         args.seed if args.noise else None,
         args.threads,
-        preprocessor_wvnum=args.preprocessor_wvnum,
+        load_retrieval_config(
+            {
+                "preprocessor": {"wavenumber_cminv": args.preprocessor_wvnum},
+                "engine": {"num_threads": args.threads},
+            }
+        ),
     )

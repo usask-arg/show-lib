@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import copy
 import logging
-from copy import copy
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +15,7 @@ from skretrieval.util import configure_log
 from showlib.cal_db import CalibrationDatabase
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.ancillary import Ancillary
+from showlib.l2.config import altitude_grid, engine_kwargs, load_retrieval_config
 from showlib.l2.data import L2FileWriter, L2Profile
 from showlib.l2.lineshape import SHOWLineShapes
 from showlib.l2.optical import h2o_optical_property
@@ -44,7 +45,7 @@ def aerosol_extinction_profile(self, name: str, native_alt_grid: np.array, cfg: 
     else:
         aero_const = sk.test_util.scenarios.test_aerosol_constituent(native_alt_grid)
 
-        ext = copy(aero_const.extinction_per_m)
+        ext = copy.copy(aero_const.extinction_per_m)
 
     low_boundary = np.nonzero(ext)[0][0]
 
@@ -102,13 +103,14 @@ def aerosol_extinction_profile(self, name: str, native_alt_grid: np.array, cfg: 
 
 
 def process_l1b_to_l2_file(
-    l1b_file: Path, output_folder: Path, cal_db_path: Path, **kwargs
+    l1b_file: Path, output_folder: Path, cal_db_path: Path, config: dict
 ):
+    """Retrieve every image of an L1B granule; ``config`` from load_retrieval_config."""
     # Load in the data
     cal_db = CalibrationDatabase.from_file(cal_db_path)
     l1b_data = L1bDataSet.from_file(l1b_file)
     line_shapes = SHOWLineShapes.from_l1b(
-        cal_db, l1b_data, model_res_cminv=kwargs.get("model_res_cminv", 0.01)
+        cal_db, l1b_data, model_res_cminv=config["model_res_cminv"]
     )
     por_data = xr.open_dataset(l1b_data.l2_por_path)
 
@@ -119,7 +121,7 @@ def process_l1b_to_l2_file(
         logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
         writer = L2FileWriter(
-            process_l1b_to_l2(l1b_data, por_data, line_shapes, **kwargs)
+            process_l1b_to_l2(l1b_data, por_data, line_shapes, config)
         )
 
         writer.save(out_file)
@@ -129,36 +131,20 @@ def process_l1b_to_l2(
     l1b_data: L1bDataSet,
     por_data: xr.Dataset,
     line_shapes: SHOWLineShapes,
+    config: dict,
     process_slice=None,
-    **kwargs,
 ):
-    if "altitude_grid" not in kwargs:
-        altitude_grid = np.unique(
-            np.concatenate(
-                (
-                    np.arange(0, 9000.0, 1000.0),
-                    np.arange(9000, 35000, 500.0),
-                    np.arange(35000, 40000, 1000),
-                    np.arange(40000, 65001, 5000),
-                )
-            )
-        )
-    else:
-        altitude_grid = kwargs["altitude_grid"]
+    grid = altitude_grid(config)
+    observation = config["observation"]
     if process_slice is None:
         process_slice = range(len(l1b_data.ds.time))
 
     preprocessor_data = l2_preprocessor(
-        l1b_data,
-        por_data,
-        line_shapes,
-        process_slice,
-        altitude_grid=altitude_grid,
-        **kwargs,
+        l1b_data, por_data, line_shapes, config, process_slice
     )
 
-    upper_bound = kwargs.get("upper_bound", 30000)
-    configured_lower_bound = kwargs.get("lower_bound")
+    upper_bound = observation["upper_bound_m"]
+    configured_lower_bound = observation["lower_bound_m"]
     if configured_lower_bound is not None:
         if not np.isfinite(configured_lower_bound):
             msg = "lower_bound must be finite"
@@ -180,10 +166,10 @@ def process_l1b_to_l2(
             image,
             low_alt=retrieval_lower_bound,
             high_alt=upper_bound,
-            row_reduction=kwargs.get("row_reduction", 1),
-            low_wvnumber_filter=kwargs.get("low_wvnumber_filter", 0),
-            high_wvnumber_filter=kwargs.get("high_wvnumber_filter", 1e10),
-            override_los=kwargs.get("override_los", False),
+            row_reduction=observation["row_reduction"],
+            low_wvnumber_filter=observation["low_wavenumber_filter_cminv"],
+            high_wvnumber_filter=observation["high_wavenumber_filter_cminv"],
+            override_los=observation["override_los"],
         )
         por_image = por_data.isel(time=image)
 
@@ -198,13 +184,17 @@ def process_l1b_to_l2(
             por_image.temperature.to_numpy()[good],
         )
 
-        minimizer_kwargs = {
-            "method": "trf",
-            "xtol": 1e-15,
-            "include_bounds": True,
-            "max_nfev": 20,
-            "ftol": 1e-6,
-        }
+        state_kwargs = copy.deepcopy(config["retrieval"]["state"])
+        state_kwargs["aerosols"]["stratospheric_aerosol"]["prior_state"] = (
+            preprocessor["aerosol"]
+        )
+        state_kwargs["surface"]["lambertian_albedo"]["wavelengths"] = np.array(
+            [1e7 / max_wv, 1e7 / min_wv]
+        )
+        state_kwargs["shifts"]["wavenumber"]["num_los"] = len(skl1["meas"].data.los)
+        state_kwargs["splines"]["constant_los"]["low_wavelength_nm"] = 1e7 / max_wv
+        state_kwargs["splines"]["constant_los"]["high_wavelength_nm"] = 1e7 / min_wv
+        state_kwargs["altitude_grid"] = grid
 
         ret = Retrieval(
             observation=l1b_image,
@@ -220,76 +210,10 @@ def process_l1b_to_l2(
             minimizer="scipy",
             ancillary=anc,
             l1_kwargs={},
-            model_kwargs={
-                "num_threads": kwargs.get("num_threads", 1),
-                "los_refraction": kwargs.get("los_refraction", True),
-                "multiple_scatter_source": kwargs.get(
-                    "multiple_scatter_source",
-                    sk.MultipleScatterSource.TwoStream,
-                ),
-                "num_streams": kwargs.get("num_streams", 2),
-                "wavelength_batch_size": 128
-            },
-            minimizer_kwargs=minimizer_kwargs,
+            model_kwargs=engine_kwargs(config, "retrieval"),
+            minimizer_kwargs=dict(config["minimizer"]),
             target_kwargs={},
-            state_kwargs={
-                "absorbers": {
-                    "h2o": {
-                        "prior_influence": 1e-2,
-                        "tikh_factor": 2.5e1,
-                        "log_space": False,
-                        "min_value": 0,
-                        "max_value": 1e-1,
-                        "prior": {"type": "mipas", "value": 1e-6},
-                    },
-                },
-                "aerosols": {
-                    "stratospheric_aerosol": {
-                        "type": "extinction_profile_2",
-                        "enabled": True,
-                        "nominal_wavelength": 1350,
-                        "scale_factor": 1,
-                        #"initial_guess": preprocessor["aerosol"],
-                        "prior_state": preprocessor["aerosol"],
-                        "retrieved_quantities": {
-                            "extinction_per_m": {
-                                "prior_influence": 1e6,
-                                "tikh_factor": 0,
-                                "min_value": -1e-3,
-                                "max_value": 1e-3,
-                            },
-                        },
-                        "prior": {
-                            "extinction_per_m": {"type": "testing"},
-                        },
-                    },
-                },
-                "surface": {
-                    "lambertian_albedo": {
-                        "prior_influence": 0,
-                        "tikh_factor": 1e6,
-                        "log_space": False,
-                        "wavelengths": np.array([1e7 / max_wv, 1e7 / min_wv]),
-                        "initial_value": 0.3,
-                        "out_bounds_mode": "extend",
-                    },
-                },
-                "shifts": {
-                    "wavenumber": {
-                        "type": "wavenumber_shift",
-                        "num_los": len(l1b_image.skretrieval_l1()["meas"].data.los),
-                    }
-                },
-                "splines": {
-                    "constant_los": {
-                        "low_wavelength_nm": 1e7 / max_wv,
-                        "high_wavelength_nm": 1e7 / min_wv,
-                        "num_wv": 2,
-                        "order": 1,
-                    }
-                },
-                "altitude_grid": altitude_grid,
-            },
+            state_kwargs=state_kwargs,
         )
 
         results = ret.retrieve()
@@ -327,4 +251,5 @@ if __name__ == "__main__":
                     r"/Users/dannyz/OneDrive - University of Saskatchewan/SHOW/er2_2023/sci_flight/l2",
                 ),
                 Path(r"/Users/dannyz/Documents/sds/ils.nc"),
+                load_retrieval_config({"preprocessor": {"wavenumber_cminv": 7317.8}}),
             )

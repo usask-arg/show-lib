@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import copy
 import logging
 
 import numpy as np
-import sasktran2 as sk
 import xarray as xr
 from skretrieval.retrieval.measvec import MeasurementVector, select
 from skretrieval.retrieval.processing import Retrieval
 
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.ancillary import Ancillary
+from showlib.l2.config import altitude_grid, engine_kwargs
 from showlib.l2.lineshape import SHOWLineShapes
 from showlib.l2.showmodel import SHOWForwardModel
 
@@ -18,15 +19,16 @@ def l2_preprocessor(
     l1b_data: L1bDataSet,
     por_data: xr.Dataset,
     line_shapes: SHOWLineShapes,
+    config: dict,
     process_slice=None,
-    **kwargs,
 ):
     if process_slice is None:
         process_slice = range(len(l1b_data.ds.time))
 
-    wvnum = kwargs.get("preprocessor_wvnum", 7317.8)
-
-    upper_bound = kwargs.get("upper_bound", 30000)
+    wvnum = config["preprocessor"]["wavenumber_cminv"]
+    low_altitude = config["preprocessor"]["low_altitude"]
+    observation = config["observation"]
+    upper_bound = observation["upper_bound_m"]
 
     l2s = []
     for image in process_slice:
@@ -36,10 +38,10 @@ def l2_preprocessor(
             image,
             low_alt=0,
             high_alt=upper_bound,
-            row_reduction=kwargs.get("row_reduction", 1),
-            low_wvnumber_filter=kwargs.get("low_wvnumber_filter", 0),
-            high_wvnumber_filter=kwargs.get("high_wvnumber_filter", 1e10),
-            override_los=kwargs.get("override_los", False),
+            row_reduction=observation["row_reduction"],
+            low_wvnumber_filter=observation["low_wavenumber_filter_cminv"],
+            high_wvnumber_filter=observation["high_wavenumber_filter_cminv"],
+            override_los=observation["override_los"],
         )
         por_image = por_data.isel(time=image)
 
@@ -50,13 +52,8 @@ def l2_preprocessor(
             por_image.temperature.to_numpy()[good],
         )
 
-        minimizer_kwargs = {
-            "method": "trf",
-            "xtol": 1e-15,
-            "include_bounds": True,
-            "max_nfev": 20,
-            "ftol": 1e-6,
-        }
+        state_kwargs = copy.deepcopy(config["preprocessor"]["state"])
+        state_kwargs["altitude_grid"] = altitude_grid(config)
 
         ret = Retrieval(
             observation=l1b_image,
@@ -72,16 +69,8 @@ def l2_preprocessor(
             minimizer="scipy",
             ancillary=anc,
             l1_kwargs={},
-            model_kwargs={
-                "num_threads": kwargs.get("num_threads", 1),
-                "los_refraction": kwargs.get("los_refraction", True),
-                "multiple_scatter_source": kwargs.get(
-                    "multiple_scatter_source",
-                    sk.MultipleScatterSource.TwoStream,
-                ),
-                "num_streams": kwargs.get("num_streams", 2),
-            },
-            minimizer_kwargs=minimizer_kwargs,
+            model_kwargs=engine_kwargs(config, "preprocessor"),
+            minimizer_kwargs=dict(config["minimizer"]),
             target_kwargs={},
             measvec={
                 "meas": MeasurementVector(
@@ -94,37 +83,7 @@ def l2_preprocessor(
                     },
                 )
             },
-            state_kwargs={
-                "absorbers": {
-                    "h2o": {
-                        "prior_influence": 1e6,
-                        "tikh_factor": 2.5e3,
-                        "log_space": False,
-                        "min_value": 0,
-                        "max_value": 1e-1,
-                        "prior": {"type": "mipas", "value": 1e-6},
-                    },
-                },
-                "aerosols": {
-                    "stratospheric_aerosol": {
-                        "type": "extinction_profile",
-                        "nominal_wavelength": 1350,
-                        "scale_factor": 1,
-                        "retrieved_quantities": {
-                            "extinction_per_m": {
-                                "prior_influence": 1e-1,
-                                "tikh_factor": 1e1,
-                                "min_value": 0,
-                                "max_value": 1e-3,
-                            },
-                        },
-                        "prior": {
-                            "extinction_per_m": {"type": "testing"},
-                        },
-                    },
-                },
-                "altitude_grid": kwargs["altitude_grid"],
-            },
+            state_kwargs=state_kwargs,
         )
 
         results = ret.retrieve()
@@ -137,16 +96,18 @@ def l2_preprocessor(
         )["radiance"]
 
         # Smooth the ratio
-        meas_ratio = meas_ratio.rolling(los=5, center=True).mean()
+        meas_ratio = meas_ratio.rolling(
+            los=low_altitude["smoothing_los"], center=True
+        ).mean()
 
         # Find altitudes where abs(1 - ratio) > 0.1
-        bad = np.abs(1 - meas_ratio) > 0.1
+        bad = np.abs(1 - meas_ratio) > low_altitude["ratio_threshold"]
         bad_alt = l1.data.tangent_altitude.isel(los=bad.to_numpy().flatten())
 
         try:
             estimated_low_alt = bad_alt.max()
         except Exception:
-            estimated_low_alt = 8000.0
+            estimated_low_alt = low_altitude["fallback_m"]
 
         if "aerosol_extinction" in por_data:
             aero_prof = por_data["aerosol_extinction"].isel(time=image).interp(altitude=results["state"].altitude.to_numpy()).to_numpy()
