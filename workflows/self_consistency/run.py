@@ -31,7 +31,8 @@ from skretrieval.geodetic import geodetic
 
 from showlib.cal_db import CalibrationDatabase
 from showlib.cal_db.ideal import ideal_calibration_database
-from showlib.l1a.data import L1ADataSet, L1AImage
+from showlib.l1a.data import L1ADataSet
+from showlib.l1a.simulate import simulate_l1a
 from showlib.l2.ancillary import Ancillary
 from showlib.l2.config import load_retrieval_config
 from showlib.l2.lineshape import SHOWLineShapes
@@ -155,52 +156,34 @@ def simulate_radiance(model_wavenumber: np.ndarray, num_threads: int) -> np.ndar
     return radiance["radiance"].isel(stokes=0).to_numpy()[::-1]
 
 
-def simulate_l1a(
+def simulate_granule(
     cal_db: CalibrationDatabase,
     model_wavenumber: np.ndarray,
     radiance: np.ndarray,
     noise_seed: int | None,
 ) -> L1ADataSet:
-    bin_width = np.gradient(model_wavenumber)
-    count_rate = np.stack(
-        [
-            cal_db.forward_operator(row, model_wavenumber, bin_width, 1.0)
-            @ radiance[:, row]
-            for row in range(cal_db.num_rows)
-        ]
-    )
-    # Expose so the brightest pixel reaches 80% of full well, as hawc-simulator does
-    gain = float(cal_db.ds["detector_gain"])
-    full_well_counts = float(cal_db.ds["detector_full_well"]) / gain
-    exposure_time = (
-        AUTO_EXPOSURE_FULL_WELL_FRACTION * full_well_counts / count_rate.max()
-    )
-    image = count_rate * exposure_time
-    if noise_seed is not None:
-        rng = np.random.default_rng(noise_seed)
-        electrons = rng.poisson(image * gain) + rng.normal(
-            0.0, float(cal_db.ds["detector_read_noise"]), image.shape
-        )
-        image = np.rint(np.clip(electrons, 0, None) / gain)
-
+    """L1A for one image from radiance on the model grid, shape (num_model, num_rows)."""
     num_rows = cal_db.num_rows
-    return L1ADataSet.from_images(
-        [
-            L1AImage(
-                image=image,
-                time=TIME,
-                tangent_altitude=TANGENT_ALTITUDES_M,
-                tangent_latitude=np.full(num_rows, LATITUDE),
-                tangent_longitude=np.full(num_rows, LONGITUDE),
-                spacecraft_latitude=LATITUDE,
-                spacecraft_longitude=LONGITUDE,
-                spacecraft_altitude=SPACECRAFT_ALTITUDE_M,
-                solar_zenith_angle=np.full(num_rows, SOLAR_ZENITH_ANGLE),
-                relative_solar_azimuth_angle=np.full(num_rows, RELATIVE_SOLAR_AZIMUTH),
-                los_azimuth_angle=np.full(num_rows, 90.0),
-                exposure_time=exposure_time,
-            )
-        ]
+    geometry = {
+        "time": TIME,
+        "tangent_altitude": TANGENT_ALTITUDES_M,
+        "tangent_latitude": np.full(num_rows, LATITUDE),
+        "tangent_longitude": np.full(num_rows, LONGITUDE),
+        "spacecraft_latitude": LATITUDE,
+        "spacecraft_longitude": LONGITUDE,
+        "spacecraft_altitude": SPACECRAFT_ALTITUDE_M,
+        "solar_zenith_angle": np.full(num_rows, SOLAR_ZENITH_ANGLE),
+        "relative_solar_azimuth_angle": np.full(num_rows, RELATIVE_SOLAR_AZIMUTH),
+        "los_azimuth_angle": np.full(num_rows, 90.0),
+    }
+    return simulate_l1a(
+        cal_db,
+        model_wavenumber,
+        radiance.T[np.newaxis],
+        [geometry],
+        full_well_fraction=AUTO_EXPOSURE_FULL_WELL_FRACTION,
+        noise=noise_seed is not None,
+        seed=noise_seed,
     )
 
 
@@ -248,7 +231,7 @@ def main(
     radiance = timed(
         "SASKTRAN2 truth radiance", simulate_radiance, model_wavenumber, num_threads
     )
-    l1a = timed("L1A", simulate_l1a, cal_db, model_wavenumber, radiance, noise_seed)
+    l1a = timed("L1A", simulate_granule, cal_db, model_wavenumber, radiance, noise_seed)
     l1a.save(output_dir / "l1a" / f"HAWC_H2OL_Counts_L1A_{NAME}.nc")
     image = l1a.ds["image"].to_numpy()
     logging.info(

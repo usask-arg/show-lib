@@ -15,7 +15,8 @@ import sasktran2 as sk
 import xarray as xr
 
 from showlib.cal_db.ideal import ideal_calibration_database
-from showlib.l1a.data import L1ADataSet, L1AImage
+from showlib.l1a.data import L1ADataSet
+from showlib.l1a.simulate import simulate_l1a
 from showlib.l2.config import load_retrieval_config
 from showlib.l2.lineshape import SHOWLineShapes
 from showlib.processing.l1a_to_l1b import process_l1a_to_l1b
@@ -29,31 +30,20 @@ MODEL_RES_CMINV = 0.05
 def _l1a(cal_db) -> L1ADataSet:
     grid = SHOWLineShapes(cal_db, None, MODEL_RES_CMINV).model_wavenumber
     num_rows = cal_db.num_rows
-    image = np.stack(
-        [
-            cal_db.forward_operator(row, grid, np.gradient(grid), 0.05)
-            @ np.full(grid.shape, 3e-3 * (1 - row / 10))
-            for row in range(num_rows)
-        ]
-    )
-    return L1ADataSet.from_images(
-        [
-            L1AImage(
-                image=image,
-                time=np.datetime64("2026-11-10T12:00:00"),
-                tangent_altitude=TANGENT_ALTITUDES_M,
-                tangent_latitude=np.full(num_rows, 52.0),
-                tangent_longitude=np.full(num_rows, -106.0),
-                spacecraft_latitude=50.0,
-                spacecraft_longitude=-106.0,
-                spacecraft_altitude=500e3,
-                solar_zenith_angle=np.full(num_rows, 60.0),
-                relative_solar_azimuth_angle=np.full(num_rows, 30.0),
-                los_azimuth_angle=np.full(num_rows, 90.0),
-                exposure_time=0.05,
-            )
-        ]
-    )
+    radiance = 3e-3 * (1 - np.arange(num_rows)[:, np.newaxis] / 10) * np.ones(len(grid))
+    geometry = {
+        "time": np.datetime64("2026-11-10T12:00:00"),
+        "tangent_altitude": TANGENT_ALTITUDES_M,
+        "tangent_latitude": np.full(num_rows, 52.0),
+        "tangent_longitude": np.full(num_rows, -106.0),
+        "spacecraft_latitude": 50.0,
+        "spacecraft_longitude": -106.0,
+        "spacecraft_altitude": 500e3,
+        "solar_zenith_angle": np.full(num_rows, 60.0),
+        "relative_solar_azimuth_angle": np.full(num_rows, 30.0),
+        "los_azimuth_angle": np.full(num_rows, 90.0),
+    }
+    return simulate_l1a(cal_db, grid, radiance[np.newaxis], [geometry], seed=1)
 
 
 def _program_of_record(altitude_m: np.ndarray) -> xr.Dataset:
