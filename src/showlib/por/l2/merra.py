@@ -8,6 +8,8 @@ import xarray as xr
 from scipy import interpolate
 from skretrieval.util import linear_interpolating_matrix
 
+from showlib.constant import AVOGADRO_CONSTANT_PER_MOL, MOLAR_GAS_CONSTANT_J_PER_MOL_K
+
 
 def get_tropopause_height(alt, temperature):
     # Determines the thermal tropopause from temperature profiles in the input dataset.
@@ -142,8 +144,8 @@ class MERRA2:
 
         air_dens = (
             profile_data["PL"]
-            / (8.31446261815324 * profile_data["T"])
-            * 6.0221408e23
+            / (MOLAR_GAS_CONSTANT_J_PER_MOL_K * profile_data["T"])
+            * AVOGADRO_CONSTANT_PER_MOL
             / 1e6
             * (1 - profile_data["QV"])
         )

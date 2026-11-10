@@ -1,32 +1,78 @@
 from __future__ import annotations
 
+import copy
 import logging
 
 import numpy as np
 import sasktran2 as sk
 import xarray as xr
-from skretrieval.core.lineshape import UserLineShape
 from skretrieval.retrieval.measvec import MeasurementVector, select
-from skretrieval.retrieval.processing import Retrieval
 
+from showlib.cal_db import CalibrationDatabase
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.ancillary import Ancillary
+from showlib.l2.config import altitude_grid, engine_kwargs
+from showlib.l2.lineshape import SHOWLineShapes
+from showlib.l2.optical import h2o_optical_property
+from showlib.l2.retrieval import SHOWRetrieval
 from showlib.l2.showmodel import SHOWForwardModel
+
+
+def weakest_h2o_sample(
+    cal_db: CalibrationDatabase,
+    row: int = 0,
+    min_transmission: float = 0.5,
+    pressure_pa: float = 12000.0,
+    temperature_k: float = 216.65,
+) -> float:
+    """The in-band sample wavenumber [cm-1] with the least H2O absorption.
+
+    Uses the retrieval's HITRAN H2O cross sections at a lower-stratosphere
+    reference state (by default about 15 km in the US standard atmosphere), among
+    the row's samples where the spectral transmission is at least
+    ``min_transmission``. Suitable for preprocessor.wavenumber_cminv.
+    """
+    samples = cal_db.sample_wavenumber(row)
+    samples = samples[cal_db.spectral_transmission(samples) >= min_transmission]
+    if len(samples) == 0:
+        msg = f"No samples in row {row} have transmission >= {min_transmission}"
+        raise ValueError(msg)
+
+    altitudes = np.array([0.0, 1.0, 2.0])
+    geometry = sk.Geometry1D(
+        0.5,
+        0.0,
+        6372e3,
+        altitudes,
+        sk.InterpolationMethod.LinearInterpolation,
+        sk.GeometryType.Spherical,
+    )
+    atmo = sk.Atmosphere(geometry, sk.Config(), wavelengths_nm=1e7 / samples)
+    atmo.pressure_pa = np.full(len(altitudes), pressure_pa)
+    atmo.temperature_k = np.full(len(altitudes), temperature_k)
+    cross_section = np.asarray(
+        h2o_optical_property().atmosphere_quantities(atmo).extinction
+    )
+    return float(samples[np.argmin(cross_section[0])])
 
 
 def l2_preprocessor(
     l1b_data: L1bDataSet,
     por_data: xr.Dataset,
-    cal_db: xr.Dataset,
+    line_shapes: SHOWLineShapes,
+    config: dict,
     process_slice=None,
-    **kwargs,
 ):
     if process_slice is None:
         process_slice = range(len(l1b_data.ds.time))
 
-    wvnum = kwargs.get("preprocessor_wvnum", 7317.8)
-
-    upper_bound = kwargs.get("upper_bound", 30000)
+    wvnum = config["preprocessor"]["wavenumber_cminv"]
+    if wvnum == "auto":
+        wvnum = weakest_h2o_sample(line_shapes.cal_db)
+        logging.info("Preprocessor wavenumber: %.3f cm-1", wvnum)
+    low_altitude = config["preprocessor"]["low_altitude"]
+    observation = config["observation"]
+    upper_bound = observation["upper_bound_m"]
 
     l2s = []
     for image in process_slice:
@@ -36,10 +82,10 @@ def l2_preprocessor(
             image,
             low_alt=0,
             high_alt=upper_bound,
-            row_reduction=kwargs.get("row_reduction", 1),
-            low_wvnumber_filter=kwargs.get("low_wvnumber_filter", 0),
-            high_wvnumber_filter=kwargs.get("high_wvnumber_filter", 1e10),
-            override_los=kwargs.get("override_los", False),
+            row_reduction=observation["row_reduction"],
+            low_wvnumber_filter=observation["low_wavenumber_filter_cminv"],
+            high_wvnumber_filter=observation["high_wavenumber_filter_cminv"],
+            override_los=observation["override_los"],
         )
         por_image = por_data.isel(time=image)
 
@@ -50,39 +96,16 @@ def l2_preprocessor(
             por_image.temperature.to_numpy()[good],
         )
 
-        minimizer_kwargs = {
-            "method": "trf",
-            "xtol": 1e-15,
-            "include_bounds": True,
-            "max_nfev": 20,
-            "ftol": 1e-6,
-        }
+        state_kwargs = copy.deepcopy(config["preprocessor"]["state"])
+        state_kwargs["altitude_grid"] = altitude_grid(config)
 
-        def ls_fn(w):
-            if "sample_wavenumber" in cal_db:
-                return UserLineShape(
-                    cal_db.hires_wavenumber.to_numpy(),
-                    cal_db.sel(sample_wavenumber=1e7 / w, method="nearest")[
-                        "ils"
-                    ].to_numpy(),
-                    False,
-                    integration_fraction=0.97,
-                )
-            return UserLineShape(
-                cal_db.hires_wavenumber.to_numpy(),
-                cal_db["ils"].to_numpy(),
-                True,
-                integration_fraction=0.97,
-            )
-
-        ret = Retrieval(
+        ret = SHOWRetrieval(
             observation=l1b_image,
             forward_model_cfg={
                 "meas": {
                     "kwargs": {
-                        "lineshape_fn": ls_fn,
-                        "spectral_native_coordinate": "wavenumber_cminv",
-                        "model_res_cminv": 0.01,
+                        "line_shapes": line_shapes,
+                        "rows": l1b_image.retrieval_rows(),
                     },
                     "class": SHOWForwardModel,
                 },
@@ -90,13 +113,8 @@ def l2_preprocessor(
             minimizer="scipy",
             ancillary=anc,
             l1_kwargs={},
-            model_kwargs={
-                "num_threads": kwargs.get("num_threads", 1),
-                "los_refraction": kwargs.get("los_refraction", True),
-                "multiple_scatter_source": sk.MultipleScatterSource.DiscreteOrdinates,
-                "num_streams": 2,
-            },
-            minimizer_kwargs=minimizer_kwargs,
+            model_kwargs=engine_kwargs(config, "preprocessor"),
+            minimizer_kwargs=dict(config["minimizer"]),
             target_kwargs={},
             measvec={
                 "meas": MeasurementVector(
@@ -109,37 +127,7 @@ def l2_preprocessor(
                     },
                 )
             },
-            state_kwargs={
-                "absorbers": {
-                    "h2o": {
-                        "prior_influence": 1e6,
-                        "tikh_factor": 2.5e3,
-                        "log_space": False,
-                        "min_value": 0,
-                        "max_value": 1e-1,
-                        "prior": {"type": "mipas", "value": 1e-6},
-                    },
-                },
-                "aerosols": {
-                    "stratospheric_aerosol": {
-                        "type": "extinction_profile",
-                        "nominal_wavelength": 1350,
-                        "scale_factor": 1,
-                        "retrieved_quantities": {
-                            "extinction_per_m": {
-                                "prior_influence": 1e-1,
-                                "tikh_factor": 1e1,
-                                "min_value": 0,
-                                "max_value": 1e-3,
-                            },
-                        },
-                        "prior": {
-                            "extinction_per_m": {"type": "testing"},
-                        },
-                    },
-                },
-                "altitude_grid": kwargs["altitude_grid"],
-            },
+            state_kwargs=state_kwargs,
         )
 
         results = ret.retrieve()
@@ -152,24 +140,34 @@ def l2_preprocessor(
         )["radiance"]
 
         # Smooth the ratio
-        meas_ratio = meas_ratio.rolling(los=5, center=True).mean()
+        meas_ratio = meas_ratio.rolling(
+            los=low_altitude["smoothing_los"], center=True
+        ).mean()
 
         # Find altitudes where abs(1 - ratio) > 0.1
-        bad = np.abs(1 - meas_ratio) > 0.1
+        bad = np.abs(1 - meas_ratio) > low_altitude["ratio_threshold"]
         bad_alt = l1.data.tangent_altitude.isel(los=bad.to_numpy().flatten())
 
         try:
             estimated_low_alt = bad_alt.max()
         except Exception:
-            estimated_low_alt = 8000.0
+            estimated_low_alt = low_altitude["fallback_m"]
 
-        aero_prof = results["state"][
-            "stratospheric_aerosol_extinction_per_m"
-        ].to_numpy()
+        if "aerosol_extinction" in por_data:
+            aero_prof = (
+                por_data["aerosol_extinction"]
+                .isel(time=image)
+                .interp(altitude=results["state"].altitude.to_numpy())
+                .to_numpy()
+            )
+        else:
+            aero_prof = results["state"][
+                "stratospheric_aerosol_extinction_per_m"
+            ].to_numpy()
         # Set all values above the max tangent altitude to be 0
-        aero_prof[
-            results["state"].altitude.to_numpy() > float(l1.data.tangent_altitude.max())
-        ] = 0
+        # aero_prof[
+        #    results["state"].altitude.to_numpy() > float(l1.data.tangent_altitude.max())
+        # ] = 0
 
         l2s.append({"aerosol": aero_prof, "low_alt": float(estimated_low_alt)})
 

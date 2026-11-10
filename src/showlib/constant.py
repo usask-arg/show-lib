@@ -1,0 +1,8 @@
+"""Physical constants in SI units (CODATA 2018 exact values)."""
+
+from __future__ import annotations
+
+PLANCK_CONSTANT_J_S = 6.62607015e-34
+SPEED_OF_LIGHT_M_S = 299792458.0
+AVOGADRO_CONSTANT_PER_MOL = 6.02214076e23
+MOLAR_GAS_CONSTANT_J_PER_MOL_K = 8.31446261815324

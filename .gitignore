@@ -172,3 +172,6 @@ uv.lock
 # Left over from the old pixi setup
 .pixi
 pixi.lock
+
+# Generated from the YAML schemas at docs build time
+docs/source/formats/generated/

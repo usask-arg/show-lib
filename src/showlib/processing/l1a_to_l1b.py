@@ -1,87 +1,148 @@
-from __future__ import annotations
+"""L1A to L1B: invert SHOW interferograms into calibrated radiance spectra.
 
-from pathlib import Path
+The forward model A and the inverse B are described in the `model` section of
+src/showlib/schemas/cal_db.yaml.
+"""
+
+from __future__ import annotations
 
 import numpy as np
 import xarray as xr
-from skretrieval.util import configure_log
 
-from showlib.cal_db import CalibrationDatabase
-from showlib.l1a.data import L1AImage
-from showlib.l1b.data import L1bFileWriter, L1bImage
-from showlib.l1b.l1b_processing import level1B_processing as l1b
+from showlib.cal_db import CalibrationDatabase, bin_width
+from showlib.l1a.data import L1ADataSet
+from showlib.l1b.data import L1bDataSet
+from showlib.schemas import apply_metadata, check
+
+_GEOMETRY = (
+    "tangent_altitude",
+    "tangent_latitude",
+    "tangent_longitude",
+    "spacecraft_latitude",
+    "spacecraft_longitude",
+    "spacecraft_altitude",
+    "solar_zenith_angle",
+    "relative_solar_azimuth_angle",
+    "los_azimuth_angle",
+)
 
 
-def process_l1a_to_l1b_dataset(
-    l1a: L1AImage, cal_db: CalibrationDatabase, **kwargs  # noqa: ARG001
-) -> L1bImage:
-    return None
+def inverse_operator(
+    cal_db: CalibrationDatabase, row: int, apodization: float | None = 10.0
+) -> np.ndarray:
+    """B for one detector row, shape (num_samples, num_columns).
+
+    Maps the image count rate [counts s-1] of the row to radiance
+    [W m-2 sr-1 nm-1] at the row's sample wavenumbers. The count rate is
+    flat-fielded, its mean is removed, the apodization window is applied over OPD
+    (centred on zero path difference), and the pixel-averaged fringe model (with a
+    DC term) is fit by least squares. Each row is then scaled so its line shape
+    B·A has unit area, so a flat continuum comes back at its own radiance whatever
+    the sample spacing, ZPD position, apodization, or transmission at the sample.
+    """
+    samples = cal_db.sample_wavenumber(row)
+    model = np.column_stack([np.ones(cal_db.num_columns), cal_db.fringe(row, samples)])
+    fit = np.linalg.pinv(model)[1:] * _window(cal_db.pixel_centre_opd(row), apodization)
+    fit -= fit.mean(axis=1, keepdims=True)
+
+    gain = float(cal_db.ds["detector_gain"])
+    etendue = cal_db.ds["pixel_etendue"].to_numpy()[row]
+    response = fit * (gain / etendue)[np.newaxis, :]
+
+    grid = cal_db.model_wavenumber()
+    flat_count_rate = cal_db.forward_operator(
+        row, grid, bin_width(grid), exposure_time=1.0
+    ).sum(axis=1)
+    return response / (response @ flat_count_rate)[:, np.newaxis]
 
 
-def process_l1a_to_l1b(SHOW_l1a_file: Path, output_folder: Path):
-    SHOW_l1a_data = xr.open_dataset(SHOW_l1a_file)
-    output_file = output_folder.joinpath(
-        output_folder, SHOW_l1a_file.stem.replace("L1A", "L1B") + ".nc"
+def process_l1a_to_l1b(
+    l1a: L1ADataSet,
+    cal_db: CalibrationDatabase,
+    apodization: float | None = 10.0,
+    noise_fraction: float = 0.0,
+) -> L1bDataSet:
+    """Process an L1A granule into an L1B granule.
+
+    apodization is the Kaiser window beta (None for a rectangular window).
+    radiance_noise propagates shot, read, and quantization noise through B, and
+    adds noise_fraction * |radiance| in quadrature.
+    """
+    if apodization is not None and (not np.isfinite(apodization) or apodization < 0):
+        msg = "apodization must be None or a finite, non-negative Kaiser beta"
+        raise ValueError(msg)
+    if not np.isfinite(noise_fraction) or noise_fraction < 0:
+        msg = "noise_fraction must be finite and non-negative"
+        raise ValueError(msg)
+
+    ds = l1a.ds
+    check(ds, "l1a", cal_db=cal_db.ds)
+
+    image = ds["image"].transpose("time", "los", "pixelcolumn").to_numpy()
+    exposure_time = ds["exposure_time"].to_numpy()[:, np.newaxis, np.newaxis]
+    num_exposures = (
+        ds["num_averaged_exposures"].to_numpy()[:, np.newaxis, np.newaxis]
+        if "num_averaged_exposures" in ds
+        else 1
     )
+    gain = float(cal_db.ds["detector_gain"])
+    read_noise = float(cal_db.ds["detector_read_noise"])
 
-    SHOW_l1b_entries = []
-    for time in SHOW_l1a_data.time.data:
-        # select the entry to process in the L1A file
-        l1a_ds = SHOW_l1a_data.sel(time=time)
+    count_rate = image / exposure_time
+    count_variance = (
+        np.clip(image * gain, 0, None) + read_noise**2 + gain**2 / 12
+    ) / (num_exposures * gain**2)
+    rate_variance = count_variance / exposure_time**2
 
-        # Set the Level 1B processing options
-        processing_steps = {
-            "remove_bad_pixels": True,
-            "DC_Filter": True,
-            "apply_phase_correction": True,
-            "apply_apodization": True,
-            "apply_finite_pixel_correction": True,
-            "apply_filter_correction": True,
-            "apply_abscal": True,
-        }
+    num_samples = cal_db.ds.sizes["spectral_sample"]
+    shape = (ds.sizes["time"], ds.sizes["los"], num_samples)
+    radiance = np.empty(shape)
+    detector_noise = np.empty(shape)
+    for row in range(ds.sizes["los"]):
+        operator = inverse_operator(cal_db, row, apodization)
+        radiance[:, row] = count_rate[:, row] @ operator.T
+        detector_noise[:, row] = np.sqrt(rate_variance[:, row] @ (operator**2).T)
+    radiance_noise = np.hypot(detector_noise, noise_fraction * np.abs(radiance))
 
-        # set up the L1B processor
-        L1B_process = l1b(processing_steps=processing_steps)
+    if "saturated" in ds:
+        saturated_fraction = ds["saturated"].mean("pixelcolumn").to_numpy()
+    else:
+        saturated_fraction = np.zeros((ds.sizes["time"], ds.sizes["los"]))
 
-        # Level 1A to Level 1B
-        l1b_data = L1B_process.process_signal(l1a_ds)
+    attrs = {
+        "apodization_window": "rectangular" if apodization is None else "kaiser",
+        "radiance_noise_model": "detector+fractional" if noise_fraction else "detector",
+    }
+    if apodization is not None:
+        attrs["apodization_beta"] = float(apodization)
 
-        # Merge the geometry information with the L0 file
-        SHOW_l1b_entries.append(
-            L1bImage.from_np_arrays(
-                radiance=l1b_data["radiance"].data,
-                radiance_noise=l1b_data["radiance_noise"].data,
-                wavenumber_spacing=l1a_ds.wavenumber_spacing.data
-                * np.ones_like(l1a_ds["tangent_altitude"].data),
-                left_wavenumber=l1a_ds.wavenumbers.data[0]
-                * np.ones_like(l1a_ds["tangent_altitude"].data),
-                tangent_altitude=l1a_ds["tangent_altitude"].data,
-                tangent_latitude=l1a_ds["tangent_latitude"].data,
-                tangent_longitude=l1a_ds["tangent_longitude"].data,
-                observer_altitude=l1a_ds["spacecraft_altitude"].data,
-                observer_latitude=l1a_ds["spacecraft_latitude"].data,
-                observer_longitude=l1a_ds["spacecraft_longitude"].data,
-                sza=l1a_ds["solar_zenith_angle"].data,
-                saa=l1a_ds["relative_solar_azimuth_angle"].data,
-                los_azimuth_angle=l1a_ds["los_azimuth_angle"].data,
-                time=l1a_ds["time"].data,
-            )
-        )
-
-    writer = L1bFileWriter(SHOW_l1b_entries)
-    writer.save(output_file)
-
-
-if __name__ == "__main__":
-    configure_log()
-    in_folder = Path(
-        r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\SDSPipelineTest\L1A"
+    spectral_dims = ["time", "los", "spectral_sample"]
+    l1b = xr.Dataset(
+        {
+            "radiance": (spectral_dims, radiance),
+            "radiance_noise": (spectral_dims, radiance_noise),
+            "saturated_fraction": (["time", "los"], saturated_fraction),
+            **{name: ds[name] for name in _GEOMETRY},
+        },
+        coords={
+            "time": ds["time"],
+            "los": np.arange(ds.sizes["los"]),
+            "wavenumber": cal_db.ds["sample_wavenumber"].variable,
+        },
+        attrs=attrs,
     )
-    output_folder = Path(
-        r"C:\Users\t383r\SHOW ER-2 Algorithm Dev\ER2_2023\data\SDSPipelineTest\L1B"
-    )
+    return L1bDataSet(apply_metadata(l1b, "l1b"))
 
-    # proc_l1a_to_l1b()
-    for file in in_folder.glob("HAWC*"):
-        if file.suffix == ".nc":
-            process_l1a_to_l1b(file, output_folder)
+
+def _window(opd: np.ndarray, apodization: float | None) -> np.ndarray:
+    """Kaiser window over OPD, centred on zero path difference.
+
+    Its half-width is the largest |OPD|, so on a centred uniform grid it equals
+    np.kaiser.
+    """
+    if apodization is None:
+        return np.ones_like(opd)
+    position = opd / np.max(np.abs(opd))
+    return np.i0(apodization * np.sqrt(np.clip(1 - position**2, 0, None))) / np.i0(
+        apodization
+    )
