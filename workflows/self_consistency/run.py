@@ -35,7 +35,6 @@ from showlib.l1a.data import L1ADataSet
 from showlib.l1a.simulate import simulate_l1a
 from showlib.l2.ancillary import Ancillary
 from showlib.l2.config import load_retrieval_config
-from showlib.l2.lineshape import SHOWLineShapes
 from showlib.l2.optical import h2o_optical_property
 from showlib.processing.l1a_to_l1b import process_l1a_to_l1b
 from showlib.processing.l1b_to_l2 import (
@@ -71,6 +70,17 @@ def truth_h2o_vmr(altitude_m: np.ndarray) -> np.ndarray:
     """Moist troposphere, ~4.5 ppm stratosphere, and a 1.5 ppm bump at 18 km."""
     z = altitude_m / 1e3
     return 4.5e-6 + 1e-2 * np.exp(-z / 2.2) + 1.5e-6 * np.exp(-(((z - 18) / 3) ** 2))
+
+
+def truth_aerosol_extinction(altitude_m: np.ndarray) -> np.ndarray:
+    """The skretrieval test aerosol profile, scaled by 1.5 and raised by 2 km.
+
+    The preprocessor's "testing" aerosol prior is the unmodified test profile, so
+    the truth must differ from it for the retrieval to have something to find.
+    """
+    test_profile = sk.test_util.scenarios.test_aerosol_constituent(altitude_m)
+    raised = np.interp(altitude_m - 2e3, altitude_m, test_profile.extinction_per_m)
+    return np.clip(1.5 * raised, 1e-15, None)
 
 
 def us76_pressure_temperature(altitude_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -130,11 +140,10 @@ def simulate_radiance(model_wavenumber: np.ndarray, num_threads: int) -> np.ndar
     atmo["h2o"] = sk.constituent.VMRAltitudeAbsorber(
         h2o_optical_property(), ALTITUDE_GRID_M, truth_h2o_vmr(ALTITUDE_GRID_M)
     )
-    aerosol = sk.test_util.scenarios.test_aerosol_constituent(ALTITUDE_GRID_M)
     atmo["stratospheric_aerosol"] = sk.constituent.ExtinctionScatterer(
         stratospheric_aerosol_optical_property(),
         ALTITUDE_GRID_M,
-        np.clip(aerosol.extinction_per_m, 1e-15, None),
+        truth_aerosol_extinction(ALTITUDE_GRID_M),
         1350,
         "extend",
     )
@@ -219,7 +228,7 @@ def main(
     )
     cal_db_path = output_dir / "cal_db.nc"
     cal_db.ds.to_netcdf(cal_db_path)
-    model_wavenumber = SHOWLineShapes(cal_db, apodization=None).model_wavenumber
+    model_wavenumber = cal_db.model_wavenumber(resolution_cminv=0.01)
     logging.info(
         "%d rows, %d columns, %d samples, %d model wavenumbers",
         cal_db.num_rows,
@@ -304,11 +313,11 @@ if __name__ == "__main__":
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument(
         "--preprocessor-wvnum",
-        type=float,
-        default=7335.165,
+        type=lambda value: value if value == "auto" else float(value),
+        default="auto",
         help=(
-            "sample wavenumber [cm-1] for the aerosol preprocessor; the default is the "
-            "least H2O-absorbed sample of the ideal calibration database"
+            "sample wavenumber [cm-1] for the aerosol preprocessor, or 'auto' (the "
+            "in-band sample with the least H2O absorption)"
         ),
     )
     parser.add_argument(
