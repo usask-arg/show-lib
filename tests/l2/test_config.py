@@ -25,6 +25,16 @@ def test_defaults_are_the_previous_settings():
     assert config["retrieval"]["state"][h2o[0]][h2o[1]][h2o[2]] == 2.5e1
 
 
+def test_main_retrieval_retrieves_aerosol():
+    """The WIP stash pinned aerosol (prior_influence 1e6); these are the earlier weights."""
+    config = load_retrieval_config(REQUIRED)
+    aerosol = config["retrieval"]["state"]["aerosols"]["stratospheric_aerosol"]
+    extinction = aerosol["retrieved_quantities"]["extinction_per_m"]
+    assert extinction["prior_influence"] == 1e-4
+    assert extinction["tikh_factor"] == 1e-1
+    assert extinction["min_value"] == 0
+
+
 def test_overrides_are_merged_into_the_defaults():
     config = load_retrieval_config({**REQUIRED, "minimizer": {"max_nfev": 50}})
     assert config["minimizer"]["max_nfev"] == 50
