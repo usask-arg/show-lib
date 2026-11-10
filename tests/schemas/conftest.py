@@ -6,10 +6,10 @@ import xarray as xr
 
 NUM_TIME = 2
 NUM_LOS = 3
-NUM_COLUMNS = 8
+NUM_COLUMNS = 16
 NUM_SAMPLES = 4
 LITTROW = 7330.0
-SAMPLE_SPACING = 0.5
+SAMPLE_SPACING = 0.625  # the natural spacing, 1 / (NUM_COLUMNS * 0.1 cm)
 
 
 def _var(dims, values, units=None):
@@ -114,7 +114,7 @@ def l1b() -> xr.Dataset:
 
 @pytest.fixture
 def cal_db() -> xr.Dataset:
-    opd_edges = np.linspace(-0.4, 0.4, NUM_COLUMNS + 1)
+    opd_edges = (np.arange(NUM_COLUMNS + 1) - NUM_COLUMNS / 2) * 0.1
     sample_wavenumber = LITTROW + SAMPLE_SPACING * np.arange(1, NUM_SAMPLES + 1)
     transmission_wavenumber = np.linspace(LITTROW - 5.0, LITTROW + 10.0, 31)
     data_vars = {

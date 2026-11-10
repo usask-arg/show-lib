@@ -164,3 +164,14 @@ def test_tree_still_valid_after_netcdf_round_trip(l1a, l1a_simulation, tmp_path)
     _tree(l1a, simulation=l1a_simulation).to_netcdf(path)
     with xr.open_datatree(path) as tree:
         assert validate(tree, "l1a") == []
+
+
+def test_value_at_an_exclusive_minimum(make_cal_db):
+    ds = make_cal_db()
+    ds["pixel_etendue"][0, 3] = 0.0
+    assert _locations(validate(ds, "cal_db")) == {"variables.pixel_etendue"}
+
+
+def test_zero_exposure_time_is_rejected(l1a):
+    l1a["exposure_time"][0] = 0.0
+    assert _locations(validate(l1a, "l1a")) == {"variables.exposure_time"}

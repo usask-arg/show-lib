@@ -146,7 +146,7 @@ variables:
     dtype: float
     units: s
     required: true
-    valid_min: 0
+    exclusive_min: 0
     role: acquisition
     description: Integration time of a single exposure.
 

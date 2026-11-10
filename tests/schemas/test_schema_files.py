@@ -17,6 +17,7 @@ FIELD_KEYS = {
     "default",
     "valid_min",
     "valid_max",
+    "exclusive_min",
     "allowed",
     "role",
     "description",

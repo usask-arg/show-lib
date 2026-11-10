@@ -116,9 +116,11 @@ def test_cal_db_sample_at_littrow(cal_db):
 
 
 def test_cal_db_samples_on_both_sides_of_littrow(cal_db):
-    cal_db["littrow_wavenumber"][:] = 7331.25
+    # Midway between the second and third samples, which then alias onto the
+    # same fringe frequency, so the model is not invertible either
+    cal_db["littrow_wavenumber"][:] = 7331.5625
     failures = _constraint_failures(validate(cal_db, "cal_db"))
-    assert failures == {"samples-one-sided"}
+    assert failures == {"samples-one-sided", "invertible"}
 
 
 def _with_dispersion(cal_db, scale=None, phase=None, include_grid=True):
@@ -174,3 +176,19 @@ def test_cal_db_dispersion_grid_needs_two_points(cal_db):
     cal_db = _with_dispersion(cal_db).isel(dispersion_wavenumber=[2])
     failures = _constraint_failures(validate(cal_db, "cal_db"))
     assert "dispersion-reference" in failures
+
+
+def test_cal_db_aliased_samples_are_not_invertible(make_cal_db):
+    """Samples at natural-grid indices k and N - k give identical fringes."""
+    ds = make_cal_db(num_columns=16, sample_indices=(-13, -5, -3))
+    assert "invertible" in _constraint_failures(validate(ds, "cal_db"))
+
+
+def test_cal_db_well_posed_samples_are_invertible(make_cal_db):
+    assert validate(make_cal_db(), "cal_db") == []
+
+
+def test_cal_db_nan_values_are_rejected(make_cal_db):
+    ds = make_cal_db()
+    ds["detector_gain"] = ds["detector_gain"] * np.nan
+    assert "finite-values" in _constraint_failures(validate(ds, "cal_db"))

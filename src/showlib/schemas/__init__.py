@@ -234,6 +234,8 @@ def _range_problems(values: np.ndarray, field: dict) -> list[str]:
     problems = []
     if "valid_min" in field and finite.min() < field["valid_min"]:
         problems.append(f"minimum {finite.min()} is below {field['valid_min']}")
+    if "exclusive_min" in field and finite.min() <= field["exclusive_min"]:
+        problems.append(f"minimum {finite.min()} is not above {field['exclusive_min']}")
     if "valid_max" in field and finite.max() > field["valid_max"]:
         problems.append(f"maximum {finite.max()} is above {field['valid_max']}")
     return problems

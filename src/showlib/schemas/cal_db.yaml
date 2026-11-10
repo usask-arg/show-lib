@@ -119,7 +119,7 @@ variables:
     dtype: float
     units: cm-1
     required: true
-    valid_min: 0
+    exclusive_min: 0
     role: instrument
     description: Littrow (heterodyne) vacuum wavenumber at each row boundary.
 
@@ -165,7 +165,7 @@ variables:
     dtype: float
     units: cm-1
     required: false
-    valid_min: 0
+    exclusive_min: 0
     role: instrument
     description: Vacuum wavenumbers at which the dispersion functions are tabulated.
 
@@ -186,7 +186,7 @@ variables:
     dtype: float
     units: m2 sr
     required: true
-    valid_min: 0
+    exclusive_min: 0
     role: instrument
     description: >
       Effective etendue of each pixel, including the interferometer port fraction,
@@ -210,7 +210,7 @@ variables:
     dtype: float
     units: cm-1
     required: true
-    valid_min: 0
+    exclusive_min: 0
     role: instrument
     description: Vacuum wavenumbers at which spectral_transmission is tabulated.
 
@@ -220,7 +220,7 @@ variables:
     dtype: float
     units: "1"
     required: true
-    valid_min: 0
+    exclusive_min: 0
     role: instrument
     description: >
       Electrons per count. Converts L1A `image` to electrons for the shot-noise
@@ -268,7 +268,7 @@ variables:
     dtype: float
     units: cm-1
     required: true
-    valid_min: 0
+    exclusive_min: 0
     role: instrument
     description: >
       Vacuum wavenumber of each L1B spectral sample for each row. Becomes
@@ -312,7 +312,9 @@ constraints:
   - id: invertible
     rule: >
       For every row, the pixel-averaged model evaluated at sample_wavenumber
-      (including the DC term) has full column rank and a condition number below a
-      threshold set by the validator. This replaces the uniform-grid requirements.
+      (including the DC term) has full column rank and a condition number below
+      1e6. Well-posed calibrations are about 1.5; aliased samples are rejected.
+  - id: finite-values
+    rule: Every floating-point value in the database is finite.
 
 open_questions: []

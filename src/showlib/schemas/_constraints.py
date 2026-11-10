@@ -17,6 +17,11 @@ _SCALE_ATOL = 1e-6
 _PHASE_ATOL_RAD = 1e-6
 _PHASE_SLOPE_ATOL_RAD_PER_CMINV = 1e-6
 
+# Largest condition number of a row's model (DC plus pixel-averaged fringes) the
+# invertible constraint accepts: well-posed SHOW calibrations are about 1.5, and
+# aliased samples (natural-grid indices k and N - k) about 1e13
+_MAX_MODEL_CONDITION = 1e6
+
 Check = Callable[[xr.Dataset, xr.Dataset | None], list[str]]
 
 
@@ -168,6 +173,38 @@ def _samples_one_sided(ds, _cal_db):
     return [f"samples lie on both sides of the Littrow wavenumber in rows {rows}"]
 
 
+def _invertible(ds, _cal_db):
+    from showlib.cal_db import pixel_averaged_fringe  # noqa: PLC0415  (import cycle)
+
+    if not _has(ds, "opd", "littrow_wavenumber", "sample_wavenumber") or _edge_lengths(
+        ds, None
+    ):
+        return []
+    ill_posed = []
+    for row in range(ds.sizes["los"]):
+        samples = ds["sample_wavenumber"].isel(los=row).to_numpy()
+        model = np.column_stack(
+            [np.ones(ds.sizes["pixelcolumn"]), pixel_averaged_fringe(ds, row, samples)]
+        )
+        if np.linalg.cond(model) > _MAX_MODEL_CONDITION:
+            ill_posed.append(row)
+    if not ill_posed:
+        return []
+    message = (
+        f"the model is rank-deficient or ill-conditioned (condition number above "
+        f"{_MAX_MODEL_CONDITION:g}) in rows {', '.join(map(str, ill_posed))}"
+    )
+    return [message]
+
+
+def _finite_floats(ds, _cal_db):
+    return [
+        f"{name} has non-finite values"
+        for name, var in ds.variables.items()
+        if var.dtype.kind == "f" and not np.all(np.isfinite(var.values))
+    ]
+
+
 _DISPERSION_FUNCTIONS = ("fringe_frequency_scale", "dispersion_phase")
 _DISPERSION_GRID = ("dispersion_wavenumber", "dispersion_reference_wavenumber")
 
@@ -258,6 +295,8 @@ CONSTRAINT_CHECKS: dict[str, dict[str, Check]] = {
         "dispersion-complete": _dispersion_complete,
         "dispersion-covers-band": _dispersion_covers_band,
         "dispersion-reference": _dispersion_reference,
+        "invertible": _invertible,
+        "finite-values": _finite_floats,
     },
 }
 
@@ -266,8 +305,5 @@ DEFERRED_CONSTRAINTS: dict[str, dict[str, str]] = {
         "uniform-processing": (
             "Enforced by the granule writer; a file holds one set of global attributes."
         ),
-    },
-    "cal_db": {
-        "invertible": "Needs the forward model, which is not implemented yet.",
     },
 }

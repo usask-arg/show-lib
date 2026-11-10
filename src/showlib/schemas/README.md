@@ -52,6 +52,7 @@ Variable keys:
 | `required_when` | Required when the listed variables have the listed values.           |
 | `default`       | Value assumed when an optional field is absent.                      |
 | `valid_min`/`valid_max` | Inclusive bounds on every element.                           |
+| `exclusive_min` | Strict lower bound on every element.                                 |
 | `allowed`       | Enumerated allowed values.                                           |
 | `role`          | What kind of field this is (below).                                  |
 | `description`   | One or two sentences; rendered into the docs.                        |

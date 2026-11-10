@@ -132,6 +132,10 @@ def _range(field: dict) -> str:
     if "allowed" in field:
         return ", ".join(str(value) for value in field["allowed"])
     low, high = field.get("valid_min"), field.get("valid_max")
+    if "exclusive_min" in field:
+        return f"> {field['exclusive_min']}" + (
+            f", ≤ {high}" if high is not None else ""
+        )
     if low is not None and high is not None:
         return f"[{low}, {high}]"
     if low is not None:
