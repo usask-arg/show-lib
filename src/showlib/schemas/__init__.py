@@ -72,14 +72,17 @@ def validate(
         return issues
 
     groups = schema.get("groups", {})
-    for name, child in data.children.items():
-        if name in groups:
+    for node in data.subtree:
+        if node is data:
+            continue
+        path = node.relative_to(data)
+        if path in groups:
             issues += _check_group(
-                child.to_dataset(inherit=False), groups[name], prefix=f"groups.{name}."
+                node.to_dataset(inherit=False), groups[path], prefix=f"groups.{path}."
             )
         else:
             issues.append(
-                Issue("warning", f"groups.{name}", "not defined in the schema")
+                Issue("warning", f"groups.{path}", "not defined in the schema")
             )
     return issues
 
@@ -110,13 +113,14 @@ def apply_metadata(
         return result
 
     groups = schema.get("groups", {})
-    nodes = {"/": apply_metadata(data.to_dataset(inherit=False), product)}
+    result = data.copy()
+    result.dataset = apply_metadata(data.to_dataset(inherit=False), product)
     for name, child in data.children.items():
-        child_ds = child.to_dataset(inherit=False)
         if name in groups:
-            child_ds = _fill_group_metadata(child_ds, groups[name]["variables"])
-        nodes[f"/{name}"] = child_ds
-    return xr.DataTree.from_dict(nodes)
+            result[name].dataset = _fill_group_metadata(
+                child.to_dataset(inherit=False), groups[name]["variables"]
+            )
+    return result
 
 
 def _fill_group_metadata(ds: xr.Dataset, variables: dict) -> xr.Dataset:

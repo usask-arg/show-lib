@@ -101,10 +101,10 @@ def simulate_l1a(
         )
         expected = count_rate * image_exposure
 
-        saturated = None
-        image = expected
         if noise:
             image, saturated = detector.expose(expected, num_averaged_exposures, rng)
+        else:
+            image, saturated = detector.clip(expected)
 
         images.append(
             L1AImage(
@@ -173,6 +173,15 @@ class _Detector:
             float(ds["detector_full_well"]) if "detector_full_well" in ds else None,
             int(ds["detector_adc_bits"]) if "detector_adc_bits" in ds else None,
         )
+
+    def clip(self, expected_counts: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+        """Noise-free counts limited by full well and the ADC, and where they were."""
+        if self.full_well_counts is None:
+            return expected_counts, None
+        limit = self.full_well_counts
+        if self.max_count is not None:
+            limit = min(limit, self.max_count)
+        return np.minimum(expected_counts, limit), expected_counts >= limit
 
     def expose(
         self, expected_counts: np.ndarray, num_exposures: int, rng: np.random.Generator

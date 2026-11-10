@@ -101,3 +101,18 @@ def test_linear_space_is_unchanged():
     linear = _element(log_space=False, tikh_factor=0.1, prior_influence=1e-4)
     np.testing.assert_allclose(linear.state(), linear._constituent.extinction_per_m)
     np.testing.assert_allclose(linear.apriori_state(), linear.state())
+
+
+def test_nan_levels_in_the_prior_take_the_floor():
+    """A POR aerosol profile that stops below the top of the grid interpolates to NaN."""
+    prior_state = _prior_state()
+    prior_state[-3:] = np.nan
+    element = _element(prior_state=prior_state)
+    extinction = element._constituent.extinction_per_m
+    assert np.all(np.isfinite(element.state()))
+    np.testing.assert_allclose(extinction[-3:], 1e-3 * PEAK)
+
+
+def test_an_all_nan_prior_is_rejected():
+    with pytest.raises(ValueError, match="prior_state"):
+        _element(prior_state=np.full_like(ALTITUDES, np.nan))

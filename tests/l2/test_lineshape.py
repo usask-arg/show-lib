@@ -206,3 +206,10 @@ def test_line_shapes_have_unit_area(make_cal_db, apodization):
     grid = cal_db.model_wavenumber()
     line_shape = instrument_line_shape(cal_db, 1, grid, apodization)
     np.testing.assert_allclose(line_shape.sum(axis=1), 1.0, rtol=1e-10)
+
+
+def test_from_l1b_rejects_a_slightly_shifted_grid(make_cal_db):
+    cal_db, l1b = _three_row_l1b(make_cal_db)
+    shifted = L1bDataSet(l1b.ds.assign_coords(wavenumber=l1b.ds["wavenumber"] + 0.01))
+    with pytest.raises(ValueError, match="does not match"):
+        SHOWLineShapes.from_l1b(cal_db, shifted)

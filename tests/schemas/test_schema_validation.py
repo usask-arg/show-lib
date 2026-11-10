@@ -175,3 +175,17 @@ def test_value_at_an_exclusive_minimum(make_cal_db):
 def test_zero_exposure_time_is_rejected(l1a):
     l1a["exposure_time"][0] = 0.0
     assert _locations(validate(l1a, "l1a")) == {"variables.exposure_time"}
+
+
+def test_nested_groups_are_warned_about(l1a, l1a_simulation):
+    tree = xr.DataTree.from_dict(
+        {
+            "/": l1a,
+            "/simulation": l1a_simulation,
+            "/simulation/inner": xr.Dataset({"extra": ("x", [1.0])}),
+        }
+    )
+    issues = validate(tree, "l1a")
+    assert [(i.severity, i.location) for i in issues] == [
+        ("warning", "groups.simulation/inner")
+    ]

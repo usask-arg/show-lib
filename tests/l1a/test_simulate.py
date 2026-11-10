@@ -171,3 +171,21 @@ def test_noise_needs_the_detector_limits(cal_db, wavenumber):
         simulate_l1a(
             without_full_well, wavenumber, _radiance(wavenumber), [_geometry()]
         )
+
+
+def test_noise_free_images_are_clipped_and_flagged(cal_db, wavenumber):
+    l1a = simulate_l1a(
+        cal_db,
+        wavenumber,
+        _radiance(wavenumber),
+        [_geometry()],
+        exposure_time=5.0,
+        noise=False,
+    )
+
+    full_well_counts = float(cal_db.ds["detector_full_well"]) / float(
+        cal_db.ds["detector_gain"]
+    )
+    assert float(l1a.ds["image"].max()) <= full_well_counts
+    assert bool(l1a.ds["saturated"].any())
+    assert float(l1a.simulation["image_noiseless"].max()) > full_well_counts

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import xarray as xr
 
 from showlib.schemas import apply_metadata, load_schema, validate
@@ -55,3 +56,12 @@ def test_fills_in_group_metadata(l1a, l1a_simulation):
     result = apply_metadata(tree, "l1a")
     assert validate(result, "l1a") == []
     assert result["simulation"]["image_noiseless"].attrs["units"] == "count"
+
+
+def test_keeps_nested_groups(l1a, l1a_simulation):
+    nested = xr.Dataset({"extra": ("x", [1.0, 2.0])})
+    tree = xr.DataTree.from_dict(
+        {"/": l1a, "/simulation": l1a_simulation, "/simulation/inner": nested}
+    )
+    result = apply_metadata(tree, "l1a")
+    np.testing.assert_array_equal(result["simulation/inner"]["extra"], [1.0, 2.0])

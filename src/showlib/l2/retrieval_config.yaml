@@ -42,7 +42,9 @@ minimizer:
   ftol: 1.0e-6
 
 # Stage 1: fits aerosol at one sample with H2O held near its prior, and estimates
-# the lowest usable tangent altitude
+# the lowest usable tangent altitude. If the POR has an aerosol_extinction
+# profile, the main retrieval's aerosol prior is that profile instead of this fit;
+# levels outside its altitude range take the floor (floor_fraction_of_peak).
 preprocessor:
   wavenumber_cminv: null          # required: a weakly H2O-absorbing sample in the band
   engine: {}                      # stage-specific additions to `engine`

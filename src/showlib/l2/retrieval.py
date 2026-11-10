@@ -48,15 +48,19 @@ _LOG_SPACE_MIN_EXTINCTION_PER_M = 1e-30
 def aerosol_extinction_profile(self, name: str, native_alt_grid: np.array, cfg: dict):
     if cfg.get("prior_state") is not None:
         ext = np.array(cfg["prior_state"], dtype=float)
+        if not np.any(np.isfinite(ext)):
+            msg = "Aerosol prior_state has no finite values"
+            raise ValueError(msg)
     else:
         aero_const = sk.test_util.scenarios.test_aerosol_constituent(native_alt_grid)
 
         ext = copy.copy(aero_const.extinction_per_m)
 
     # Floor at a fraction of the peak, so levels where the prior is zero can still
-    # be retrieved and the profile stays positive for log space
-    floor = cfg.get("floor_fraction_of_peak", 0.0) * np.max(ext)
-    ext = np.maximum(ext, max(floor, 1e-15))
+    # be retrieved and the profile stays positive for log space. Non-finite levels
+    # (e.g. where a POR aerosol profile does not reach) take the floor too.
+    floor = max(cfg.get("floor_fraction_of_peak", 0.0) * np.nanmax(ext), 1e-15)
+    ext = np.where(np.isfinite(ext), np.maximum(ext, floor), floor)
 
     scale_factor = cfg.get("scale_factor", 1)
     log_space = cfg.get("log_space", False)

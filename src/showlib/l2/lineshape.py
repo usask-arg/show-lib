@@ -91,7 +91,7 @@ class SHOWLineShapes:
         l1b_wavenumber = l1b.ds["wavenumber"].to_numpy()
         cal_wavenumber = cal_db.ds["sample_wavenumber"].isel(los=rows).to_numpy()
         if l1b_wavenumber.shape != cal_wavenumber.shape or not np.allclose(
-            l1b_wavenumber, cal_wavenumber
+            l1b_wavenumber, cal_wavenumber, rtol=0, atol=_SAMPLE_MATCH_ATOL_CMINV
         ):
             msg = (
                 "The L1B wavenumber grid does not match the calibration database's "
