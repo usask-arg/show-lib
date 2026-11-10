@@ -29,6 +29,16 @@ def test_noise_correlation_is_on_by_default():
     assert load_retrieval_config(REQUIRED)["retrieval"]["noise_correlation"] is True
 
 
+def test_main_retrieval_retrieves_aerosol_in_log_space():
+    config = load_retrieval_config(REQUIRED)
+    aerosol = config["retrieval"]["state"]["aerosols"]["stratospheric_aerosol"]
+    extinction = aerosol["retrieved_quantities"]["extinction_per_m"]
+    assert aerosol["log_space"] is True
+    assert aerosol["floor_fraction_of_peak"] == 1e-3
+    assert extinction["prior_influence"] == 1e-4
+    assert extinction["tikh_factor"] == 1e-1
+
+
 def test_overrides_are_merged_into_the_defaults():
     config = load_retrieval_config({**REQUIRED, "minimizer": {"max_nfev": 50}})
     assert config["minimizer"]["max_nfev"] == 50

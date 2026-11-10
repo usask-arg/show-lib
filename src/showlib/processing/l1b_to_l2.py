@@ -39,22 +39,28 @@ def stratospheric_aerosol_optical_property():
     return sk.database.MieDatabase(dist, refrac, np.arange(1300, 1401.0, 5.0))
 
 
+# In log space, a lower bound at or below zero becomes this finite floor: log(0) is
+# -inf, and skretrieval's scipy minimizer multiplies the bounds by a matrix, which
+# turns an infinite bound into NaN for every state element.
+_LOG_SPACE_MIN_EXTINCTION_PER_M = 1e-30
+
+
 @Retrieval.register_state("aerosols", "extinction_profile_2")
 def aerosol_extinction_profile(self, name: str, native_alt_grid: np.array, cfg: dict):
     if cfg.get("prior_state") is not None:
-        ext = cfg["prior_state"]
+        ext = np.array(cfg["prior_state"], dtype=float)
     else:
         aero_const = sk.test_util.scenarios.test_aerosol_constituent(native_alt_grid)
 
         ext = copy.copy(aero_const.extinction_per_m)
 
-    low_boundary = np.nonzero(ext)[0][0]
-
-    #ext[:low_boundary] = ext[low_boundary]
-
-    ext[ext < 1e-15] = 1e-15
+    # Floor at a fraction of the peak, so levels where the prior is zero can still
+    # be retrieved and the profile stays positive for log space
+    floor = cfg.get("floor_fraction_of_peak", 0.0) * np.max(ext)
+    ext = np.maximum(ext, max(floor, 1e-15))
 
     scale_factor = cfg.get("scale_factor", 1)
+    log_space = cfg.get("log_space", False)
 
     secondary_kwargs = {
         name: np.ones_like(native_alt_grid) * cfg["prior"][name]["value"]
@@ -78,7 +84,12 @@ def aerosol_extinction_profile(self, name: str, native_alt_grid: np.array, cfg: 
         f"{name}",
         cfg["retrieved_quantities"].keys(),
         min_value={
-            name: val["min_value"] for name, val in cfg["retrieved_quantities"].items()
+            name: (
+                _LOG_SPACE_MIN_EXTINCTION_PER_M
+                if log_space and val["min_value"] <= 0
+                else val["min_value"]
+            )
+            for name, val in cfg["retrieved_quantities"].items()
         },
         max_value={
             name: val["max_value"] for name, val in cfg["retrieved_quantities"].items()
@@ -86,12 +97,16 @@ def aerosol_extinction_profile(self, name: str, native_alt_grid: np.array, cfg: 
         prior={
             name: val["tikh_factor"]
             * prior.VerticalTikhonov(
-                1, prior_state=secondary_kwargs.get(name, ext * scale_factor)
+                1,
+                # Prior states are in state-vector units, so log in log space
+                prior_state=(np.log if log_space else np.asarray)(
+                    secondary_kwargs.get(name, ext * scale_factor)
+                ),
             )
             + val["prior_influence"] * prior.ConstantDiagonalPrior()
             for name, val in cfg["retrieved_quantities"].items()
         },
-        log_space=False,
+        log_space=log_space,
     )
 
     sv_ele.enabled = cfg.get("enabled", True)

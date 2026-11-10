@@ -95,14 +95,17 @@ retrieval:
         enabled: true
         nominal_wavelength: 1350
         scale_factor: 1
+        # Retrieve log(extinction): positive, and the prior penalizes fractional
+        # changes. In linear space, near-zero levels broke the fit.
+        log_space: true
+        # The prior (the preprocessor's aerosol) is floored at this fraction of its
+        # peak, so levels where it is zero can still be retrieved
+        floor_fraction_of_peak: 1.0e-3
         retrieved_quantities:
           extinction_per_m:
-            # Pinned to the preprocessor's aerosol. Retrieving it with the earlier
-            # weights (prior_influence 1e-4, tikh_factor 1e-1, min_value 0) made the
-            # self-consistency retrieval much worse; not yet understood.
-            prior_influence: 1.0e+6
-            tikh_factor: 0
-            min_value: -1.0e-3
+            prior_influence: 1.0e-4      # regularized towards the preprocessor's aerosol
+            tikh_factor: 1.0e-1
+            min_value: 0                 # implied in log space
             max_value: 1.0e-3
         prior:
           extinction_per_m: {type: testing}
