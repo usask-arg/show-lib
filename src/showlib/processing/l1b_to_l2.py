@@ -117,7 +117,6 @@ def aerosol_extinction_profile(self, name: str, native_alt_grid: np.array, cfg: 
     return sv_ele
 
 
-
 def process_l1b_to_l2_file(
     l1b_file: Path, output_folder: Path, cal_db_path: Path, config: dict
 ):
@@ -210,9 +209,9 @@ def process_l1b_to_l2(
         )
 
         state_kwargs = copy.deepcopy(config["retrieval"]["state"])
-        state_kwargs["aerosols"]["stratospheric_aerosol"]["prior_state"] = (
-            preprocessor["aerosol"]
-        )
+        state_kwargs["aerosols"]["stratospheric_aerosol"]["prior_state"] = preprocessor[
+            "aerosol"
+        ]
         state_kwargs["surface"]["lambertian_albedo"]["wavelengths"] = np.array(
             [1e7 / max_wv, 1e7 / min_wv]
         )

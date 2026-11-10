@@ -110,15 +110,20 @@ def l2_preprocessor(
             estimated_low_alt = low_altitude["fallback_m"]
 
         if "aerosol_extinction" in por_data:
-            aero_prof = por_data["aerosol_extinction"].isel(time=image).interp(altitude=results["state"].altitude.to_numpy()).to_numpy()
+            aero_prof = (
+                por_data["aerosol_extinction"]
+                .isel(time=image)
+                .interp(altitude=results["state"].altitude.to_numpy())
+                .to_numpy()
+            )
         else:
             aero_prof = results["state"][
                 "stratospheric_aerosol_extinction_per_m"
             ].to_numpy()
         # Set all values above the max tangent altitude to be 0
-        #aero_prof[
+        # aero_prof[
         #    results["state"].altitude.to_numpy() > float(l1.data.tangent_altitude.max())
-        #] = 0
+        # ] = 0
 
         l2s.append({"aerosol": aero_prof, "low_alt": float(estimated_low_alt)})
 

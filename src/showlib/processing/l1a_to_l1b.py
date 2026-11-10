@@ -87,9 +87,9 @@ def process_l1a_to_l1b(
     read_noise = float(cal_db.ds["detector_read_noise"])
 
     count_rate = image / exposure_time
-    count_variance = (np.clip(image * gain, 0, None) + read_noise**2 + gain**2 / 12) / (
-        num_exposures * gain**2
-    )
+    count_variance = (
+        np.clip(image * gain, 0, None) + read_noise**2 + gain**2 / 12
+    ) / (num_exposures * gain**2)
     rate_variance = count_variance / exposure_time**2
 
     num_samples = cal_db.ds.sizes["spectral_sample"]
