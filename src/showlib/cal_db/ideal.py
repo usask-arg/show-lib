@@ -20,7 +20,29 @@ def bandpass_filter(
     transition_nm: float,
     stopband_db: float,
 ) -> np.ndarray:
-    """Flat passband with raised-cosine transitions and a constant stopband."""
+    """Flat passband with raised-cosine transitions and a constant stopband.
+
+    Parameters
+    ----------
+    wavelength_nm : array_like
+        Wavelengths at which to evaluate the transmission [nm]
+    centre_nm : float
+        Centre of the passband [nm]
+    half_width_nm : float
+        Half-width of the flat passband [nm]; the passband is
+        centre_nm ± half_width_nm
+    transition_nm : float
+        Width of the raised-cosine transition on each side of the passband [nm]
+    stopband_db : float
+        Stopband attenuation [dB]; the stopband transmission is
+        10**(-stopband_db / 20)
+
+    Returns
+    -------
+    np.ndarray
+        Transmission, between the stopband value and 1, with the shape of
+        wavelength_nm
+    """
     wavelength_nm = np.asarray(wavelength_nm, dtype=float)
     stopband = 10 ** (-stopband_db / 20)
     distance = np.abs(wavelength_nm - centre_nm) - half_width_nm
@@ -54,10 +76,54 @@ def ideal_calibration_database(
 ) -> CalibrationDatabase:
     """Build an ideal calibration database.
 
-    Samples are on the natural grid, littrow - k / (num_columns · opd_spacing) for
-    k = 1 ... num_columns / 2 - 1, kept where the filter transmits at least
-    ``min_sample_transmission``. The detector gain is the full well divided by the
-    ADC range.
+    Every row has the same centred, uniform OPD grid and Littrow wavenumber, and no
+    fringe phase, visibility loss, or dispersion. Samples are on the natural grid,
+    littrow - k / (num_columns · opd_spacing) for k = 1 ... num_columns / 2 - 1,
+    kept where the filter transmits at least ``min_sample_transmission``.
+
+    Parameters
+    ----------
+    num_rows : int
+        Number of detector rows (lines of sight)
+    num_columns : int, optional
+        Number of detector columns (OPD samples), by default 1280
+    opd_spacing_cm : float, optional
+        OPD step between adjacent columns [cm], by default 0.0075
+    littrow_wavelength_nm : float, optional
+        Littrow (heterodyne) wavelength [nm], by default 1362
+    filter_centre_nm : float, optional
+        Centre of the bandpass filter [nm], by default 1364
+    filter_half_width_nm : float, optional
+        Half-width of the filter's flat passband [nm], by default 1.5
+    filter_transition_nm : float, optional
+        Width of each of the filter's raised-cosine edges [nm], by default 0.2
+    filter_stopband_db : float, optional
+        Filter stopband attenuation [dB], by default 80
+    min_sample_transmission : float, optional
+        Smallest filter transmission at which a natural-grid wavenumber becomes an
+        L1B sample, by default 0.01
+    table_margin_nm : float, optional
+        How far the spectral_transmission table extends beyond the filter edges
+        [nm], by default 0.5
+    table_resolution_cminv : float, optional
+        Spacing of the spectral_transmission table [cm-1], by default 0.02
+    pixel_etendue : float, optional
+        Effective etendue of every pixel [m2 sr], by default 1e-11
+    detector_full_well : float, optional
+        Full-well capacity [electrons], by default 450000
+    detector_adc_bits : int, optional
+        ADC resolution [bits], by default 12. The detector gain is
+        detector_full_well / 2**detector_adc_bits electrons per count.
+    detector_read_noise : float, optional
+        RMS read noise per exposure [electrons], by default 75
+    valid_from : str, optional
+        Start of the calibration's validity period, as an ISO 8601 UTC timestamp,
+        by default "2026-01-01T00:00:00Z"
+
+    Returns
+    -------
+    CalibrationDatabase
+        The validated calibration database
     """
     littrow = 1e7 / littrow_wavelength_nm
     natural_spacing = 1 / (num_columns * opd_spacing_cm)
