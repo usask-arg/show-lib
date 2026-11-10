@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from showlib.cal_db import CalibrationDatabase
+from showlib.cal_db import CalibrationDatabase, bin_width
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.showmodel import SHOWInstrumentModel
 from showlib.processing.l1a_to_l1b import inverse_operator
@@ -31,7 +31,7 @@ def instrument_line_shape(
     """
     wavenumber = np.asarray(wavenumber, dtype=float)
     forward = cal_db.forward_operator(
-        row, wavenumber, np.gradient(wavenumber), exposure_time=1.0
+        row, wavenumber, bin_width(wavenumber), exposure_time=1.0
     )
     return inverse_operator(cal_db, row, apodization) @ forward
 

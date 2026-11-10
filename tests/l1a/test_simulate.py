@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from showlib.cal_db import bin_width
 from showlib.cal_db.ideal import ideal_calibration_database
 from showlib.l1a.simulate import simulate_l1a
 from showlib.l2.lineshape import SHOWLineShapes
@@ -44,10 +45,10 @@ def _radiance(wavenumber, num_images=1, num_rows=NUM_ROWS):
 
 
 def _expected_counts(cal_db, wavenumber, radiance, exposure_time):
-    bin_width = np.gradient(wavenumber)
+    widths = bin_width(wavenumber)
     return np.stack(
         [
-            cal_db.forward_operator(row, wavenumber, bin_width, exposure_time)
+            cal_db.forward_operator(row, wavenumber, widths, exposure_time)
             @ radiance[row]
             for row in range(cal_db.num_rows)
         ]

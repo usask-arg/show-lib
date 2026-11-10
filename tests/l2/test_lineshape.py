@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from showlib.cal_db import CalibrationDatabase
+from showlib.cal_db import CalibrationDatabase, bin_width
 from showlib.l1a.data import L1ADataSet, L1AImage
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.lineshape import (
@@ -30,7 +30,7 @@ def _l1a_from_spectrum(cal_db, wavenumber, spectrum) -> L1ADataSet:
     num_rows = cal_db.num_rows
     image = np.stack(
         [
-            cal_db.forward_operator(row, wavenumber, np.gradient(wavenumber), 0.5)
+            cal_db.forward_operator(row, wavenumber, bin_width(wavenumber), 0.5)
             @ spectrum
             for row in range(num_rows)
         ]
@@ -69,16 +69,6 @@ def test_line_shape_reproduces_l1a_to_l1b(make_cal_db):
             line_shapes.matrix(row) @ spectrum,
             rtol=1e-10,
         )
-
-
-def test_line_shape_on_the_sample_grid_is_the_identity(make_cal_db):
-    cal_db = CalibrationDatabase(make_cal_db())
-    samples = cal_db.sample_wavenumber(0)
-    np.testing.assert_allclose(
-        instrument_line_shape(cal_db, 0, samples, apodization=None),
-        np.eye(len(samples)),
-        atol=1e-12,
-    )
 
 
 def test_line_shapes_peak_at_their_samples(make_cal_db):
@@ -208,3 +198,11 @@ def test_from_l1b_rejects_rows_the_calibration_does_not_have(make_cal_db):
     shifted = L1bDataSet(l1b.ds.assign_coords(los=l1b.ds["los"] + 2))
     with pytest.raises(ValueError, match="detector rows"):
         SHOWLineShapes.from_l1b(cal_db, shifted)
+
+
+@pytest.mark.parametrize("apodization", [None, 10.0])
+def test_line_shapes_have_unit_area(make_cal_db, apodization):
+    cal_db = _non_ideal_cal_db(make_cal_db)
+    grid = cal_db.model_wavenumber()
+    line_shape = instrument_line_shape(cal_db, 1, grid, apodization)
+    np.testing.assert_allclose(line_shape.sum(axis=1), 1.0, rtol=1e-10)

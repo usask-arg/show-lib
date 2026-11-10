@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from showlib.cal_db import CalibrationDatabase
+from showlib.cal_db import CalibrationDatabase, bin_width
 from showlib.l1a.data import L1ADataSet
 from showlib.l1b.data import L1bDataSet
 from showlib.schemas import apply_metadata, check
@@ -34,24 +34,26 @@ def inverse_operator(
 
     Maps the image count rate [counts s-1] of the row to radiance
     [W m-2 sr-1 nm-1] at the row's sample wavenumbers. The count rate is
-    flat-fielded and converted to photon rate per unit etendue, its mean is
-    removed, the apodization window is applied over OPD, and the pixel-averaged
-    fringe model (with a DC term) is fit by least squares. With apodization=None
-    the inverse is exact for spectra that lie on the sample grid.
+    flat-fielded, its mean is removed, the apodization window is applied over OPD
+    (centred on zero path difference), and the pixel-averaged fringe model (with a
+    DC term) is fit by least squares. Each row is then scaled so its line shape
+    B·A has unit area, so a flat continuum comes back at its own radiance whatever
+    the sample spacing, ZPD position, apodization, or transmission at the sample.
     """
     samples = cal_db.sample_wavenumber(row)
-    if len(samples) < 2:
-        msg = "Each detector row needs at least two spectral samples"
-        raise ValueError(msg)
-
     model = np.column_stack([np.ones(cal_db.num_columns), cal_db.fringe(row, samples)])
     fit = np.linalg.pinv(model)[1:] * _window(cal_db.pixel_centre_opd(row), apodization)
     fit -= fit.mean(axis=1, keepdims=True)
 
     gain = float(cal_db.ds["detector_gain"])
     etendue = cal_db.ds["pixel_etendue"].to_numpy()[row]
-    weight = cal_db.radiance_weight(samples, np.gradient(samples))
-    return fit * (gain / etendue)[np.newaxis, :] / weight[:, np.newaxis]
+    response = fit * (gain / etendue)[np.newaxis, :]
+
+    grid = cal_db.model_wavenumber()
+    flat_count_rate = cal_db.forward_operator(
+        row, grid, bin_width(grid), exposure_time=1.0
+    ).sum(axis=1)
+    return response / (response @ flat_count_rate)[:, np.newaxis]
 
 
 def process_l1a_to_l1b(
@@ -133,12 +135,14 @@ def process_l1a_to_l1b(
 
 
 def _window(opd: np.ndarray, apodization: float | None) -> np.ndarray:
-    """Kaiser window evaluated over OPD; equals np.kaiser on a uniform grid."""
+    """Kaiser window over OPD, centred on zero path difference.
+
+    Its half-width is the largest |OPD|, so on a centred uniform grid it equals
+    np.kaiser.
+    """
     if apodization is None:
         return np.ones_like(opd)
-    centre = 0.5 * (opd.max() + opd.min())
-    half_width = 0.5 * (opd.max() - opd.min())
-    position = (opd - centre) / half_width
+    position = opd / np.max(np.abs(opd))
     return np.i0(apodization * np.sqrt(np.clip(1 - position**2, 0, None))) / np.i0(
         apodization
     )

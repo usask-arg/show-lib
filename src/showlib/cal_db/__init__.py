@@ -13,6 +13,23 @@ import xarray as xr
 from showlib.constant import PLANCK_CONSTANT_J_S, SPEED_OF_LIGHT_M_S
 from showlib.schemas import check
 
+# Samples per fringe period in the default model_wavenumber grid
+_FRINGE_SAMPLES_PER_PERIOD = 20
+_TABLE_SAMPLES_PER_STEP = 4
+
+
+def bin_width(wavenumber) -> np.ndarray:
+    """Trapezoid-rule weights [cm-1] for radiance tabulated on ``wavenumber``.
+
+    ``bin_width(grid) @ values`` integrates piecewise-linear values exactly; use
+    it for the ``bin_width`` of forward_operator and radiance_weight.
+    """
+    wavenumber = np.asarray(wavenumber, dtype=float)
+    widths = np.gradient(wavenumber)
+    widths[0] = 0.5 * (wavenumber[1] - wavenumber[0])
+    widths[-1] = 0.5 * (wavenumber[-1] - wavenumber[-2])
+    return widths
+
 
 class CalibrationDatabase:
     def __init__(self, ds: xr.Dataset):
@@ -43,6 +60,27 @@ class CalibrationDatabase:
         """OPD [cm] at the centre of each pixel in a row (mean of its corners)."""
         edges = self._ds["opd"].to_numpy()[row : row + 2].mean(axis=0)
         return 0.5 * (edges[:-1] + edges[1:])
+
+    def model_wavenumber(self, resolution_cminv: float | None = None) -> np.ndarray:
+        """Wavenumber grid [cm-1] covering everywhere the instrument transmits.
+
+        A is zero where spectral_transmission is zero, so radiance on this grid is
+        all the forward model needs. The default resolution resolves both the
+        fastest fringe (largest |opd|, _FRINGE_SAMPLES_PER_PERIOD samples per
+        period) and the transmission table (_TABLE_SAMPLES_PER_STEP samples per
+        table step).
+        """
+        table = self._ds["transmission_wavenumber"].to_numpy()
+        if resolution_cminv is None:
+            max_opd = np.max(np.abs(self._ds["opd"].to_numpy()))
+            resolution_cminv = min(
+                1 / (_FRINGE_SAMPLES_PER_PERIOD * max_opd),
+                np.min(np.diff(np.sort(table))) / _TABLE_SAMPLES_PER_STEP,
+            )
+        passband = table[self._ds["spectral_transmission"].to_numpy() > 0]
+        # linspace so the grid ends exactly where the transmission does
+        num = int(np.ceil((passband.max() - passband.min()) / resolution_cminv)) + 1
+        return np.linspace(passband.min(), passband.max(), num)
 
     def spectral_transmission(self, wavenumber) -> np.ndarray:
         """Spectral transmission at ``wavenumber``; zero outside its table."""

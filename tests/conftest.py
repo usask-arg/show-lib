@@ -38,6 +38,7 @@ def _cal_db(
     transmission: float = 0.8,
     detector_gain: float = 2.0,
     detector_read_noise: float = 10.0,
+    transmission_range: tuple[float, float] | None = None,
 ) -> xr.Dataset:
     """Calibration database for a centred, uniform OPD grid unless overridden.
 
@@ -50,7 +51,9 @@ def _cal_db(
         littrow_edges = np.full(num_rows + 1, littrow)
     natural_spacing = 1 / (num_columns * opd_spacing)
     samples = littrow + np.asarray(sample_indices) * natural_spacing
-    transmission_wavenumber = np.linspace(samples.min() - 5, samples.max() + 5, 101)
+    if transmission_range is None:
+        transmission_range = (samples.min() - 5, samples.max() + 5)
+    transmission_wavenumber = np.linspace(*transmission_range, 101)
 
     data_vars = {
         "opd": (["los_edge", "pixelcolumn_edge"], opd),

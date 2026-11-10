@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from showlib.cal_db import CalibrationDatabase
+from showlib.cal_db import CalibrationDatabase, bin_width
 from showlib.l1a.data import L1ADataSet, L1AImage
 
 
@@ -34,8 +34,9 @@ def simulate_l1a(
     cal_db : CalibrationDatabase
         Instrument model and detector parameters
     wavenumber : np.ndarray
-        Increasing vacuum wavenumbers [cm-1] at which ``radiance`` is given. Each
-        value represents a bin of width np.gradient(wavenumber).
+        Increasing vacuum wavenumbers [cm-1] at which ``radiance`` is given,
+        integrated with the trapezoid rule (showlib.cal_db.bin_width).
+        CalibrationDatabase.model_wavenumber() gives a suitable grid.
     radiance : np.ndarray
         Spectral radiance [W m-2 sr-1 nm-1], shape
         (num_images, num_rows, len(wavenumber)), one spectrum per detector row
@@ -76,9 +77,9 @@ def simulate_l1a(
         raise ValueError(msg)
 
     detector = _Detector.from_calibration(cal_db, noise or exposure_time is None)
-    bin_width = np.gradient(wavenumber)
+    widths = bin_width(wavenumber)
     count_rate_operators = [
-        cal_db.forward_operator(row, wavenumber, bin_width, exposure_time=1.0)
+        cal_db.forward_operator(row, wavenumber, widths, exposure_time=1.0)
         for row in range(cal_db.num_rows)
     ]
     rng = np.random.default_rng(seed)

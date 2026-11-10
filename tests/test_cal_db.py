@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from showlib.cal_db import CalibrationDatabase
+from showlib.cal_db import CalibrationDatabase, bin_width
 from showlib.schemas import SchemaValidationError
 
 WAVENUMBER = np.linspace(7327.0, 7333.0, 25)
@@ -179,3 +179,20 @@ def test_dataset_is_exposed(make_cal_db):
     ds = make_cal_db()
     assert CalibrationDatabase(ds).ds is ds
     assert isinstance(CalibrationDatabase(ds).ds, xr.Dataset)
+
+
+def test_bin_width_is_the_trapezoid_rule():
+    grid = np.array([0.0, 1.0, 3.0, 4.0])
+    np.testing.assert_allclose(bin_width(grid), [0.5, 1.5, 1.5, 0.5])
+    np.testing.assert_allclose(
+        bin_width(grid) @ (2 * grid + 1), np.trapezoid(2 * grid + 1, grid)
+    )
+
+
+def test_model_wavenumber_spans_the_transmission_table_exactly(make_cal_db):
+    cal_db = CalibrationDatabase(make_cal_db())
+    table = cal_db.ds["transmission_wavenumber"].to_numpy()
+    grid = cal_db.model_wavenumber(resolution_cminv=0.03)
+    assert grid[0] == table[0]
+    assert grid[-1] == table[-1]
+    assert np.max(np.diff(grid)) <= 0.03 + 1e-9
