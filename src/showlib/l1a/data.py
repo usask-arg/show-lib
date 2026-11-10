@@ -6,14 +6,11 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from showlib.schemas import apply_metadata, check
+from showlib.schemas import apply_metadata, check, load_schema
+from showlib.util import wrap_degrees
 
-SIMULATION_GROUP = "simulation"
-
-
-def wrap_degrees(angle, lower: float) -> np.ndarray:
-    """Wrap angles in degrees into [lower, lower + 360)."""
-    return (np.asarray(angle, dtype=float) - lower) % 360.0 + lower
+# l1a.yaml defines one netCDF group: the simulator diagnostics
+(SIMULATION_GROUP,) = load_schema("l1a")["groups"]
 
 
 class L1AImage:
