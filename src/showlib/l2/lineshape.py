@@ -81,8 +81,15 @@ class SHOWLineShapes:
         model_res_cminv: float = 0.01,
     ) -> SHOWLineShapes:
         """Line shapes for a granule, using the apodization recorded in its L1B."""
+        rows = l1b.ds["los"].to_numpy()
+        if rows.min() < 0 or rows.max() >= cal_db.num_rows:
+            msg = (
+                f"The L1B's detector rows ({rows.min()} to {rows.max()}) are not all "
+                f"in the calibration database, which has {cal_db.num_rows} rows"
+            )
+            raise ValueError(msg)
         l1b_wavenumber = l1b.ds["wavenumber"].to_numpy()
-        cal_wavenumber = cal_db.ds["sample_wavenumber"].to_numpy()
+        cal_wavenumber = cal_db.ds["sample_wavenumber"].isel(los=rows).to_numpy()
         if l1b_wavenumber.shape != cal_wavenumber.shape or not np.allclose(
             l1b_wavenumber, cal_wavenumber
         ):

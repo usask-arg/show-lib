@@ -7,7 +7,7 @@ from skretrieval.core.radianceformat import RadianceGridded
 
 from showlib.cal_db import CalibrationDatabase
 from showlib.l2.lineshape import SHOWLineShapes
-from showlib.l2.noise import whitened_measurement_vector
+from showlib.l2.noise import noise_correlation_applies, whitened_measurement_vector
 from showlib.processing.l1a_to_l1b import inverse_operator
 
 SAMPLE_INDICES = (-6, -5, -4, -3, -2, -1)
@@ -143,3 +143,27 @@ def test_whitening_rejects_a_different_measurement_size(make_cal_db):
 
     with pytest.raises(ValueError, match="measurement"):
         measurement_vector.fn({"meas": smaller}, None)
+
+
+def test_whitening_rejects_non_positive_noise(make_cal_db):
+    line_shapes = _line_shapes(make_cal_db)
+    observation = _observation(line_shapes)
+    observation.data["radiance_noise"][0, 1] = 0.0
+
+    with pytest.raises(ValueError, match="radiance_noise"):
+        whitened_measurement_vector(observation.data, line_shapes, ROWS)
+
+
+@pytest.mark.parametrize(
+    ("noise_model", "expected"),
+    [
+        ("detector", True),
+        ("detector+fractional", False),
+        ("fractional", False),
+        ("none", False),
+    ],
+)
+def test_correlation_applies_only_to_pure_detector_noise(noise_model, expected):
+    """The fractional term is uncorrelated between samples, and L1B stores only the
+    total, so the B-derived correlation describes the noise only without it."""
+    assert noise_correlation_applies({"radiance_noise_model": noise_model}) is expected

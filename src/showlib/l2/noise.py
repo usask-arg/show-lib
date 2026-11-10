@@ -17,6 +17,15 @@ from skretrieval.retrieval.measvec import Measurement, MeasurementVector, select
 from showlib.l2.lineshape import SHOWLineShapes
 
 
+def noise_correlation_applies(l1b_attrs: dict) -> bool:
+    """Whether the B-derived correlation describes an L1B's radiance_noise.
+
+    It does only for pure detector noise: a fractional term is uncorrelated between
+    samples, and L1B stores only the total.
+    """
+    return l1b_attrs.get("radiance_noise_model") == "detector"
+
+
 def measurement_whitener(
     observation: xr.Dataset, line_shapes: SHOWLineShapes, rows
 ) -> sparse.csr_matrix:
@@ -27,6 +36,9 @@ def measurement_whitener(
     sight's detector row.
     """
     sigma = observation["radiance_noise"].transpose("wavenumber", "los").to_numpy()
+    if not np.all(np.isfinite(sigma) & (sigma > 0)):
+        msg = "radiance_noise must be finite and positive to whiten the measurement"
+        raise ValueError(msg)
     samples = observation["wavenumber"].to_numpy()
     num_samples, num_los = sigma.shape
 

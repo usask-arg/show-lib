@@ -5,6 +5,7 @@ import pytest
 
 from showlib.cal_db import CalibrationDatabase
 from showlib.l1a.data import L1ADataSet, L1AImage
+from showlib.l1b.data import L1bDataSet
 from showlib.l2.lineshape import (
     SHOWLineShapes,
     apodization_from_attrs,
@@ -185,3 +186,25 @@ def test_instrument_model_matches_samples_on_a_fine_grid(make_cal_db):
     model = line_shapes.instrument_model(rows=[0], sample_wavenumber=samples[[2]])
 
     np.testing.assert_allclose(model.matrices[0], line_shapes.matrix(0)[[2]])
+
+
+def _three_row_l1b(make_cal_db):
+    cal_db = CalibrationDatabase(make_cal_db(num_rows=3))
+    grid = np.linspace(7325.0, 7333.0, 200)
+    l1b = process_l1a_to_l1b(
+        _l1a_from_spectrum(cal_db, grid, np.full(grid.shape, 1e-3)), cal_db
+    )
+    return cal_db, l1b
+
+
+def test_from_l1b_accepts_a_subset_of_detector_rows(make_cal_db):
+    cal_db, l1b = _three_row_l1b(make_cal_db)
+    subset = L1bDataSet(l1b.ds.isel(los=[0, 2]))
+    SHOWLineShapes.from_l1b(cal_db, subset, model_res_cminv=0.05)
+
+
+def test_from_l1b_rejects_rows_the_calibration_does_not_have(make_cal_db):
+    cal_db, l1b = _three_row_l1b(make_cal_db)
+    shifted = L1bDataSet(l1b.ds.assign_coords(los=l1b.ds["los"] + 2))
+    with pytest.raises(ValueError, match="detector rows"):
+        SHOWLineShapes.from_l1b(cal_db, shifted)

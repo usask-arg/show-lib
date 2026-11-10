@@ -18,7 +18,7 @@ from showlib.l2.ancillary import Ancillary
 from showlib.l2.config import altitude_grid, engine_kwargs, load_retrieval_config
 from showlib.l2.data import L2FileWriter, L2Profile
 from showlib.l2.lineshape import SHOWLineShapes
-from showlib.l2.noise import whitened_measurement_vector
+from showlib.l2.noise import noise_correlation_applies, whitened_measurement_vector
 from showlib.l2.optical import h2o_optical_property
 from showlib.l2.preprocessor import l2_preprocessor
 from showlib.l2.showmodel import SHOWForwardModel
@@ -159,6 +159,15 @@ def process_l1b_to_l2(
         l1b_data, por_data, line_shapes, config, process_slice
     )
 
+    use_noise_correlation = config["retrieval"]["noise_correlation"]
+    if use_noise_correlation and not noise_correlation_applies(l1b_data.ds.attrs):
+        logging.warning(
+            "Treating L1B samples as independent: noise correlation needs "
+            "radiance_noise_model 'detector', not %r",
+            l1b_data.ds.attrs.get("radiance_noise_model"),
+        )
+        use_noise_correlation = False
+
     upper_bound = observation["upper_bound_m"]
     configured_lower_bound = observation["lower_bound_m"]
     if configured_lower_bound is not None:
@@ -213,7 +222,7 @@ def process_l1b_to_l2(
         state_kwargs["altitude_grid"] = grid
 
         measvec = None
-        if config["retrieval"]["noise_correlation"]:
+        if use_noise_correlation:
             measvec = {
                 "measurement": whitened_measurement_vector(
                     skl1["meas"].data, line_shapes, l1b_image.retrieval_rows()
