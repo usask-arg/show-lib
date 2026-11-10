@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 import sasktran2 as sk
 import xarray as xr
+import yaml
 from skretrieval.geodetic import geodetic
 
 from showlib.cal_db import CalibrationDatabase
@@ -301,6 +302,17 @@ def report(l2: xr.Dataset) -> None:
         )
 
 
+def _merge_overrides(base: dict, extra: dict) -> dict:
+    """Command-line settings layered over a --config file."""
+    merged = dict(base)
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_overrides(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("output_dir", type=Path)
@@ -322,6 +334,11 @@ if __name__ == "__main__":
         default=0.5,
         help="spacing of the detector rows' tangent altitudes",
     )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="YAML retrieval configuration merged into the defaults",
+    )
     args = parser.parse_args()
     TANGENT_ALTITUDES_M = np.arange(5e3, 35e3 + 1, args.tangent_spacing_km * 1e3)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -330,9 +347,12 @@ if __name__ == "__main__":
         args.seed if args.noise else None,
         args.threads,
         load_retrieval_config(
-            {
-                "preprocessor": {"wavenumber_cminv": args.preprocessor_wvnum},
-                "engine": {"num_threads": args.threads},
-            }
+            _merge_overrides(
+                yaml.safe_load(args.config.read_text()) if args.config else {},
+                {
+                    "preprocessor": {"wavenumber_cminv": args.preprocessor_wvnum},
+                    "engine": {"num_threads": args.threads},
+                },
+            )
         ),
     )
