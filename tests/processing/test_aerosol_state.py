@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from showlib.processing.l1b_to_l2 import (
+from showlib.l2.retrieval import (
     aerosol_extinction_profile,
     stratospheric_aerosol_optical_property,
 )

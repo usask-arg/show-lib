@@ -6,12 +6,12 @@ import logging
 import numpy as np
 import xarray as xr
 from skretrieval.retrieval.measvec import MeasurementVector, select
-from skretrieval.retrieval.processing import Retrieval
 
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.ancillary import Ancillary
 from showlib.l2.config import altitude_grid, engine_kwargs
 from showlib.l2.lineshape import SHOWLineShapes
+from showlib.l2.retrieval import SHOWRetrieval
 from showlib.l2.showmodel import SHOWForwardModel
 
 
@@ -55,7 +55,7 @@ def l2_preprocessor(
         state_kwargs = copy.deepcopy(config["preprocessor"]["state"])
         state_kwargs["altitude_grid"] = altitude_grid(config)
 
-        ret = Retrieval(
+        ret = SHOWRetrieval(
             observation=l1b_image,
             forward_model_cfg={
                 "meas": {
