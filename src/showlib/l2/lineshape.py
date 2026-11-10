@@ -122,7 +122,9 @@ class SHOWLineShapes:
         """Instrument model for lines of sight on ``rows``, at the given samples.
 
         The samples are matched to each row's calibration sample wavenumbers and
-        returned in increasing order.
+        returned in increasing order. Every row must have all of them: per-row
+        sample grids, which the calibration schema allows, are not supported by
+        the retrieval yet (L1bImage.skretrieval_l1 raises NotImplementedError).
         """
         requested = np.sort(np.asarray(sample_wavenumber, dtype=float))
         matrices = [

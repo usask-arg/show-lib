@@ -272,7 +272,8 @@ variables:
     role: instrument
     description: >
       Vacuum wavenumber of each L1B spectral sample for each row. Becomes
-      `wavenumber` in L1B.
+      `wavenumber` in L1B. Rows may differ, but the L2 retrieval currently needs
+      the same samples on every row it uses.
 
 constraints:
   - id: edge-lengths

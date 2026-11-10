@@ -77,7 +77,8 @@ variables:
     role: instrument
     description: >
       Vacuum wavenumber of each spectral sample for each line of sight, from
-      sample_wavenumber in the calibration database. Fixed within a granule.
+      sample_wavenumber in the calibration database. Fixed within a granule. The
+      L2 retrieval currently needs the same grid on every line of sight it uses.
 
   # ---------------------------------------------------------------- measurement
   radiance:
