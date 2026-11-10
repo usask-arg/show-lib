@@ -12,11 +12,9 @@ from scipy import interpolate
 from skretrieval.geodetic import geodetic
 from skretrieval.util import rotation_matrix
 
+from showlib.constant import PLANCK_CONSTANT_J_S, SPEED_OF_LIGHT_M_S
 from showlib.l1b.data import L1bDataSet, L1bImage
 from showlib.timeutil import mjd_to_datetime
-
-_PLANCK_CONSTANT_J_S = 6.62607015e-34
-_SPEED_OF_LIGHT_M_S = 299792458.0
 
 
 def _unit_conversion(radiance: np.ndarray, wavenumber: np.ndarray) -> np.ndarray:
@@ -28,7 +26,7 @@ def _unit_conversion(radiance: np.ndarray, wavenumber: np.ndarray) -> np.ndarray
     """
     if np.nanmean(radiance) <= 1e9:
         return np.ones_like(wavenumber)
-    photon_energy_j = _PLANCK_CONSTANT_J_S * _SPEED_OF_LIGHT_M_S * wavenumber * 100
+    photon_energy_j = PLANCK_CONSTANT_J_S * SPEED_OF_LIGHT_M_S * wavenumber * 100
     per_nm = 1e7 / (1e7 / wavenumber) ** 2
     return photon_energy_j * 1e4 * per_nm
 

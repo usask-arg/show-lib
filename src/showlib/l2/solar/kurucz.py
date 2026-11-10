@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import sasktran2 as sk
 
+from showlib.constant import PLANCK_CONSTANT_J_S, SPEED_OF_LIGHT_M_S
+
 
 class KuruczContinuum:
     def __init__(self):
@@ -26,7 +28,9 @@ class KuruczContinuum:
 
         self._ir_res_spectrum = ir_spectrum_data[1].to_numpy()  # w / m2 / s
 
-        energy_to_photons = 6.62607004e-34 * 299792458 / (self._ir_wavelengths * 1e-9)
+        energy_to_photons = (
+            PLANCK_CONSTANT_J_S * SPEED_OF_LIGHT_M_S / (self._ir_wavelengths * 1e-9)
+        )
         self._ir_continuum = (
             self._ir_spectrum / self._ir_res_spectrum / energy_to_photons / 1e4
         )
@@ -49,7 +53,9 @@ class KuruczContinuum:
         self._vis_rel_wavelengths = vis_spectrum_data[0].to_numpy()
         self._vis_rel_spectrum = vis_spectrum_data[1].to_numpy()  # w / m2 / s
 
-        energy_to_photons = 6.62607004e-34 * 299792458 / (self._vis_wavelengths * 1e-9)
+        energy_to_photons = (
+            PLANCK_CONSTANT_J_S * SPEED_OF_LIGHT_M_S / (self._vis_wavelengths * 1e-9)
+        )
 
         self._vis_continuum = (
             self._vis_spectrum

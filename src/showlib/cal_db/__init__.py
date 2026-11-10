@@ -10,10 +10,8 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
+from showlib.constant import PLANCK_CONSTANT_J_S, SPEED_OF_LIGHT_M_S
 from showlib.schemas import check
-
-_PLANCK_CONSTANT_J_S = 6.62607015e-34
-_SPEED_OF_LIGHT_M_S = 299792458.0
 
 
 class CalibrationDatabase:
@@ -103,7 +101,7 @@ class CalibrationDatabase:
         [cm-1] to a photon rate per unit etendue [s-1 m-2 sr-1].
         """
         wavenumber = np.asarray(wavenumber, dtype=float)
-        photon_energy_j = _PLANCK_CONSTANT_J_S * _SPEED_OF_LIGHT_M_S * wavenumber * 100
+        photon_energy_j = PLANCK_CONSTANT_J_S * SPEED_OF_LIGHT_M_S * wavenumber * 100
         return (
             self.spectral_transmission(wavenumber)
             * (1e7 / wavenumber**2)
