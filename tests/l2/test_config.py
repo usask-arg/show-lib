@@ -100,3 +100,14 @@ def test_engine_kwargs_combine_shared_and_stage_settings():
     assert preprocessor["multiple_scatter_source"] is sk.MultipleScatterSource.TwoStream
     assert "wavelength_batch_size" not in preprocessor
     assert retrieval["wavelength_batch_size"] == 128
+
+
+def test_loads_a_yaml_file_from_a_string_path(tmp_path):
+    path = tmp_path / "retrieval.yaml"
+    path.write_text(yaml.safe_dump({**REQUIRED, "observation": {"row_reduction": 3}}))
+    assert load_retrieval_config(str(path))["observation"]["row_reduction"] == 3
+
+
+def test_a_section_cannot_be_replaced_by_a_single_value():
+    with pytest.raises(ValueError, match=r"engine must be a mapping"):
+        load_retrieval_config({**REQUIRED, "engine": 8})

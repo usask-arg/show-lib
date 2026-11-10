@@ -204,6 +204,8 @@ def _dispersion_reference(ds, _cal_db):
     if not _has(ds, *_DISPERSION_GRID):
         return []
     grid = ds["dispersion_wavenumber"].to_numpy()
+    if len(grid) < 2:
+        return ["dispersion_wavenumber needs at least two points to define a slope"]
     order = np.argsort(grid)
     grid = grid[order]
     reference = float(ds["dispersion_reference_wavenumber"])

@@ -168,3 +168,9 @@ def test_cal_db_dispersion_phase_has_slope_at_reference(cal_db):
     cal_db = _with_dispersion(cal_db, phase=lambda offset: 0.1 * offset)
     failures = _constraint_failures(validate(cal_db, "cal_db"))
     assert failures == {"dispersion-reference"}
+
+
+def test_cal_db_dispersion_grid_needs_two_points(cal_db):
+    cal_db = _with_dispersion(cal_db).isel(dispersion_wavenumber=[2])
+    failures = _constraint_failures(validate(cal_db, "cal_db"))
+    assert "dispersion-reference" in failures

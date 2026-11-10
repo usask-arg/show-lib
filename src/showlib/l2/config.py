@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import os
 from importlib import resources
 from pathlib import Path
 
@@ -14,7 +15,7 @@ import yaml
 _FREE_FORM = "state"
 
 
-def load_retrieval_config(overrides: dict | Path | None = None) -> dict:
+def load_retrieval_config(overrides: dict | str | os.PathLike | None = None) -> dict:
     """The default retrieval settings with ``overrides`` merged in.
 
     ``overrides`` is a dict or a YAML file with the same layout as
@@ -27,8 +28,8 @@ def load_retrieval_config(overrides: dict | Path | None = None) -> dict:
         .read_text("utf-8")
     )
     config = yaml.safe_load(text)
-    if isinstance(overrides, Path):
-        overrides = yaml.safe_load(overrides.read_text("utf-8"))
+    if isinstance(overrides, str | os.PathLike):
+        overrides = yaml.safe_load(Path(overrides).read_text("utf-8"))
     _merge(config, copy.deepcopy(overrides or {}), path="", free_form=False)
 
     if config["preprocessor"]["wavenumber_cminv"] is None:
@@ -66,6 +67,9 @@ def _merge(base: dict, overrides: dict, path: str, free_form: bool) -> None:
         location = f"{path}{key}"
         if key not in base and not free_form:
             msg = f"Unknown retrieval setting {location}"
+            raise ValueError(msg)
+        if isinstance(base.get(key), dict) and not isinstance(value, dict):
+            msg = f"Retrieval setting {location} must be a mapping, got {value!r}"
             raise ValueError(msg)
         if isinstance(value, dict) and isinstance(base.get(key), dict):
             _merge(
