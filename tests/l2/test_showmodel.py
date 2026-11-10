@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import xarray as xr
 from skretrieval.core.sasktranformat import SASKTRANRadiance
+from skretrieval.retrieval.measvec import select
 
 from showlib.cal_db import CalibrationDatabase
 from showlib.l2.lineshape import SHOWLineShapes
@@ -89,3 +90,21 @@ def test_forward_model_hooks_use_the_line_shapes(make_cal_db):
     np.testing.assert_allclose(wavelength, 1e7 / line_shapes.model_wavenumber[::-1])
     np.testing.assert_allclose(inst.sample_wavenumber, samples[[0, 2]])
     np.testing.assert_allclose(inst.matrices[0], line_shapes.matrix(1)[[0, 2]])
+
+
+def test_measurement_flattening_matches_the_whitener(instrument_model):
+    """skretrieval flattens the model output in (wavenumber, los) order, which is
+    the order showlib.l2.noise.measurement_whitener assumes."""
+    rng = np.random.default_rng(3)
+    spectra = rng.uniform(1, 2, (len(MODEL_WAVENUMBER), 2))
+    wf = rng.uniform(0, 1, (3, len(MODEL_WAVENUMBER), 2))
+    l1 = instrument_model.model_radiance(_model_radiance(spectra, wf), None)
+    l1.data["wf"] = l1.data["wf_test"]
+
+    measurement = select({"meas": l1})
+
+    radiance = l1.data["radiance"].transpose("wavenumber", "los").to_numpy()
+    num_los = radiance.shape[1]
+    np.testing.assert_array_equal(measurement.y, radiance.ravel())
+    sample, los = 2, 1
+    assert measurement.y[sample * num_los + los] == radiance[sample, los]

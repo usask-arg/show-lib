@@ -4,8 +4,10 @@ import numpy as np
 import pytest
 
 from showlib.cal_db import CalibrationDatabase, bin_width
+from showlib.cal_db.ideal import ideal_calibration_database
 from showlib.l1a.data import L1ADataSet, L1AImage
-from showlib.l2.lineshape import instrument_line_shape
+from showlib.l1a.simulate import simulate_l1a
+from showlib.l2.lineshape import SHOWLineShapes, instrument_line_shape
 from showlib.processing.l1a_to_l1b import inverse_operator, process_l1a_to_l1b
 from showlib.schemas import SchemaValidationError, validate
 
@@ -305,3 +307,42 @@ def test_a_single_sample_row_recovers_a_flat_continuum(make_cal_db):
     cal_db = CalibrationDatabase(make_cal_db(sample_indices=(-2,)))
     l1b = _continuum_l1b(cal_db, lambda nu: np.full(nu.shape, 2e-3), apodization=None)
     np.testing.assert_allclose(l1b.ds["radiance"], 2e-3, rtol=1e-3)
+
+
+def test_reported_noise_matches_monte_carlo():
+    """Simulated detector noise through L1A->L1B: scatter and neighbour correlation."""
+    num_images = 300
+    cal_db = ideal_calibration_database(2, num_columns=128)
+    grid = cal_db.model_wavenumber(resolution_cminv=0.02)
+    radiance = np.broadcast_to(2e-3, (num_images, cal_db.num_rows, len(grid)))
+    geometry = {
+        "tangent_altitude": np.array([15e3, 16e3]),
+        "tangent_latitude": np.full(2, 52.0),
+        "tangent_longitude": np.full(2, -106.0),
+        "spacecraft_latitude": 50.0,
+        "spacecraft_longitude": -106.0,
+        "spacecraft_altitude": 500e3,
+        "solar_zenith_angle": np.full(2, 60.0),
+        "relative_solar_azimuth_angle": np.full(2, 30.0),
+        "los_azimuth_angle": np.full(2, 90.0),
+    }
+    times = np.datetime64("2026-11-10T12:00:00") + np.arange(
+        num_images
+    ) * np.timedelta64(1, "s")
+    l1a = simulate_l1a(
+        cal_db, grid, radiance, [{**geometry, "time": t} for t in times], seed=7
+    )
+
+    l1b = process_l1a_to_l1b(l1a, cal_db, apodization=10.0)
+
+    row = 0
+    measured = l1b.ds["radiance"].isel(los=row).to_numpy()
+    reported = l1b.ds["radiance_noise"].isel(los=row).mean("time").to_numpy()
+    np.testing.assert_allclose(measured.std(axis=0, ddof=1) / reported, 1.0, atol=0.12)
+
+    neighbours = [
+        np.corrcoef(measured[:, k], measured[:, k + 1])[0, 1]
+        for k in range(measured.shape[1] - 1)
+    ]
+    modelled = np.diag(SHOWLineShapes(cal_db, 10.0).noise_correlation(row), 1)
+    np.testing.assert_allclose(np.mean(neighbours), np.mean(modelled), atol=0.05)
