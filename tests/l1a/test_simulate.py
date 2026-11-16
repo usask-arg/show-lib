@@ -63,6 +63,7 @@ def test_noise_free_image_is_the_forward_model(cal_db, wavenumber):
     )
 
     expected = _expected_counts(cal_db, wavenumber, radiance[0], 0.05)
+    expected += cal_db.static_dark(0.05)
     np.testing.assert_allclose(l1a.ds["image"].isel(time=0), expected, rtol=1e-12)
     np.testing.assert_allclose(l1a.simulation["image_noiseless"].isel(time=0), expected)
     assert not bool(l1a.simulation["noise_enabled"])
@@ -70,6 +71,16 @@ def test_noise_free_image_is_the_forward_model(cal_db, wavenumber):
         l1a.ds["tangent_altitude"].isel(time=0), _geometry()["tangent_altitude"]
     )
     assert validate(l1a.ds, "l1a") == []
+
+
+def _saturation_electrons(cal_db):
+    """The lower of full well and the ADC range above the dark offset."""
+    gain = float(cal_db.ds["detector_gain"])
+    max_count = 2 ** int(cal_db.ds["detector_adc_bits"]) - 1
+    return np.minimum(
+        float(cal_db.ds["detector_full_well"]),
+        (max_count - cal_db.static_dark(0.0)) * gain,
+    )
 
 
 def test_auto_exposure_puts_the_brightest_pixel_at_the_full_well_fraction(
@@ -80,8 +91,8 @@ def test_auto_exposure_puts_the_brightest_pixel_at_the_full_well_fraction(
     )
 
     gain = float(cal_db.ds["detector_gain"])
-    full_well = float(cal_db.ds["detector_full_well"])
-    peak = float(l1a.ds["image"].max()) * gain / full_well
+    electrons = (l1a.ds["image"].isel(time=0) - cal_db.static_dark(0.0)) * gain
+    peak = float(np.max(electrons / _saturation_electrons(cal_db)))
     np.testing.assert_allclose(peak, 0.8)
     np.testing.assert_allclose(l1a.simulation["expected_peak_full_well_fraction"], 0.8)
     np.testing.assert_allclose(l1a.simulation["auto_exposure_full_well_fraction"], 0.8)
@@ -104,9 +115,8 @@ def test_noise_matches_the_l1a_to_l1b_noise_model(cal_db, wavenumber):
     gain = float(cal_db.ds["detector_gain"])
     read_noise = float(cal_db.ds["detector_read_noise"])
     expected = l1a.simulation["image_noiseless"].to_numpy()
-    variance = (expected * gain + read_noise**2 + gain**2 / 12) / (
-        num_exposures * gain**2
-    )
+    electrons = (expected - cal_db.static_dark(0.0)) * gain
+    variance = (electrons + read_noise**2 + gain**2 / 12) / (num_exposures * gain**2)
     z = (l1a.ds["image"].to_numpy() - expected) / np.sqrt(variance)
     assert abs(z.mean()) < 0.02
     assert abs(z.std() - 1) < 0.02
@@ -124,11 +134,9 @@ def test_saturation_is_flagged_and_clipped(cal_db, wavenumber):
         seed=0,
     )
 
-    full_well_counts = float(cal_db.ds["detector_full_well"]) / float(
-        cal_db.ds["detector_gain"]
-    )
+    max_count = 2 ** int(cal_db.ds["detector_adc_bits"]) - 1
     assert bool(l1a.ds["saturated"].any())
-    assert float(l1a.ds["image"].max()) <= full_well_counts
+    assert float(l1a.ds["image"].max()) <= max_count
 
 
 def test_the_seed_makes_runs_reproducible(cal_db, wavenumber):
@@ -183,9 +191,68 @@ def test_noise_free_images_are_clipped_and_flagged(cal_db, wavenumber):
         noise=False,
     )
 
-    full_well_counts = float(cal_db.ds["detector_full_well"]) / float(
-        cal_db.ds["detector_gain"]
-    )
-    assert float(l1a.ds["image"].max()) <= full_well_counts
+    max_count = 2 ** int(cal_db.ds["detector_adc_bits"]) - 1
+    assert float(l1a.ds["image"].max()) <= max_count
     assert bool(l1a.ds["saturated"].any())
-    assert float(l1a.simulation["image_noiseless"].max()) > full_well_counts
+    assert float(l1a.simulation["image_noiseless"].max()) > max_count
+
+
+def test_dark_frames_have_the_dark_signal_and_its_shot_noise(wavenumber):
+    cal_db = ideal_calibration_database(
+        NUM_ROWS, num_columns=64, dark_offset=200.0, dark_current=50.0
+    )
+    num_images, exposure_time, num_exposures = 50, 2.0, 2
+    l1a = simulate_l1a(
+        cal_db,
+        wavenumber,
+        np.zeros((num_images, NUM_ROWS, len(wavenumber))),
+        [_geometry(i) for i in range(num_images)],
+        exposure_time=exposure_time,
+        num_averaged_exposures=num_exposures,
+        seed=4,
+    )
+
+    dark = cal_db.static_dark(exposure_time)
+    np.testing.assert_allclose(
+        l1a.simulation["image_noiseless"],
+        np.broadcast_to(dark, (num_images, *dark.shape)),
+    )
+    gain = float(cal_db.ds["detector_gain"])
+    read_noise = float(cal_db.ds["detector_read_noise"])
+    dark_electrons = exposure_time * 50.0 * gain
+    variance = (dark_electrons + read_noise**2 + gain**2 / 12) / (
+        num_exposures * gain**2
+    )
+    z = (l1a.ds["image"].to_numpy() - dark) / np.sqrt(variance)
+    assert abs(z.mean()) < 0.03
+    assert abs(z.std() - 1) < 0.03
+    assert not bool(l1a.ds["saturated"].any())
+
+
+def test_the_adc_saturates_above_the_dark_offset_before_full_well(wavenumber):
+    """A large offset leaves less ADC range than the full well."""
+    cal_db = ideal_calibration_database(
+        NUM_ROWS, num_columns=64, dark_offset=1000.0, dark_offset_spread=0.0
+    )
+    radiance = _radiance(wavenumber)
+    max_count = 2 ** int(cal_db.ds["detector_adc_bits"]) - 1
+
+    auto = simulate_l1a(cal_db, wavenumber, radiance, [_geometry()], noise=False)
+    assert float(auto.ds["image"].max()) < max_count
+    assert not bool(auto.ds["saturated"].any())
+    np.testing.assert_allclose(auto.simulation["expected_peak_full_well_fraction"], 0.8)
+
+    exposure_time = 1.1 * float(auto.ds["exposure_time"].isel(time=0)) / 0.8
+    for noise in (False, True):
+        long = simulate_l1a(
+            cal_db,
+            wavenumber,
+            radiance,
+            [_geometry()],
+            exposure_time=exposure_time,
+            noise=noise,
+            seed=0,
+        )
+        # Full well is 450000 electrons, about 4096 counts above the offset
+        assert float(long.ds["image"].max()) == max_count
+        assert bool(long.ds["saturated"].any())

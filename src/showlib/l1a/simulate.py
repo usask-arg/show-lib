@@ -1,9 +1,10 @@
 """Simulate L1A granules from spectral radiance with the calibration database's model.
 
-The detector follows the hawc-simulator SHOW model: each exposure has Poisson shot
-noise, saturation at full well, Gaussian read noise, and digitization at the
-calibration's gain, clipped to the ADC range; the image is the mean over the
-averaged exposures.
+The detector follows the `model` section of src/showlib/schemas/cal_db.yaml: each
+exposure has Poisson shot noise on the photo- and dark-current electrons,
+saturation at full well, Gaussian read noise, and digitization at the
+calibration's gain on top of the dark offset, clipped to the ADC range; the image
+is the mean over the averaged exposures.
 """
 
 from __future__ import annotations
@@ -47,7 +48,9 @@ def simulate_l1a(
         relative_solar_azimuth_angle, los_azimuth_angle
     exposure_time : float, optional
         Single-exposure integration time [s]. By default each image is exposed so
-        its brightest pixel reaches ``full_well_fraction`` of full well.
+        its brightest pixel reaches ``full_well_fraction`` of its saturation level:
+        the lower of the full well and the ADC range above the pixel's dark
+        offset, in photo- plus dark-current electrons.
     full_well_fraction : float, optional
         Auto-exposure target for the brightest pixel, by default 0.8
     num_averaged_exposures : int, optional
@@ -60,7 +63,8 @@ def simulate_l1a(
     Returns
     -------
     L1ADataSet
-        The granule, with the noise-free image and simulation settings in its
+        The granule, with the noise-free image (including the dark signal, before
+        saturation and digitization) and simulation settings in its
         ``simulation`` group
     """
     radiance = np.asarray(radiance, dtype=float)
@@ -97,14 +101,17 @@ def simulate_l1a(
         image_exposure = (
             exposure_time
             if exposure_time is not None
-            else full_well_fraction * detector.full_well_counts / count_rate.max()
+            else detector.auto_exposure(count_rate, full_well_fraction)
         )
-        expected = count_rate * image_exposure
+        photo_counts = count_rate * image_exposure
+        expected = detector.expected_counts(photo_counts, image_exposure)
 
         if noise:
-            image, saturated = detector.expose(expected, num_averaged_exposures, rng)
+            image, saturated = detector.expose(
+                photo_counts, image_exposure, num_averaged_exposures, rng
+            )
         else:
-            image, saturated = detector.clip(expected)
+            image, saturated = detector.clip(photo_counts, image_exposure)
 
         images.append(
             L1AImage(
@@ -116,8 +123,8 @@ def simulate_l1a(
             )
         )
         noiseless.append(expected)
-        if detector.full_well_counts is not None:
-            peak_fraction.append(expected.max() / detector.full_well_counts)
+        if detector.can_saturate:
+            peak_fraction.append(detector.peak_fraction(photo_counts, image_exposure))
 
     simulation = xr.Dataset(
         {
@@ -139,18 +146,28 @@ def simulate_l1a(
 
 
 class _Detector:
+    """Detector response for one row-by-column image, in counts and electrons."""
+
     def __init__(
         self,
         gain: float,
         read_noise: float,
+        dark_offset: np.ndarray,
+        dark_current: np.ndarray,
         full_well: float | None,
         adc_bits: int | None,
     ):
         self.gain = gain
         self.read_noise = read_noise
-        self.full_well = full_well
-        self.max_count = None if adc_bits is None else 2**adc_bits - 1
-        self.full_well_counts = None if full_well is None else full_well / gain
+        self.dark_offset = dark_offset
+        self.dark_current = dark_current
+        self.full_well = np.inf if full_well is None else full_well
+        self.max_count = np.inf if adc_bits is None else 2**adc_bits - 1
+        # Photo- plus dark-current electrons at which each pixel saturates
+        self.capacity = np.minimum(
+            self.full_well, (self.max_count - dark_offset) * gain
+        )
+        self.can_saturate = bool(np.all(np.isfinite(self.capacity)))
 
     @classmethod
     def from_calibration(cls, cal_db: CalibrationDatabase, needs_limits: bool):
@@ -167,37 +184,78 @@ class _Detector:
                     f"{' and '.join(missing)}"
                 )
                 raise ValueError(msg)
+        offset = cal_db.static_dark(0.0)
         return cls(
             float(ds["detector_gain"]),
             float(ds["detector_read_noise"]),
+            offset,
+            cal_db.static_dark(1.0) - offset,
             float(ds["detector_full_well"]) if "detector_full_well" in ds else None,
             int(ds["detector_adc_bits"]) if "detector_adc_bits" in ds else None,
         )
 
-    def clip(self, expected_counts: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+    def _electrons(self, photo_counts: np.ndarray, exposure_time: float) -> np.ndarray:
+        """Expected photo- plus dark-current electrons."""
+        return (photo_counts + exposure_time * self.dark_current) * self.gain
+
+    def auto_exposure(self, count_rate: np.ndarray, fraction: float) -> float:
+        """Exposure time [s] that puts the brightest pixel at ``fraction`` of its
+        saturation level."""
+        electron_rate = self._electrons(count_rate, 1.0)
+        return fraction / np.max(electron_rate / self.capacity)
+
+    def peak_fraction(self, photo_counts: np.ndarray, exposure_time: float) -> float:
+        """Largest expected electrons as a fraction of the pixel's saturation level."""
+        return float(
+            np.max(self._electrons(photo_counts, exposure_time) / self.capacity)
+        )
+
+    def expected_counts(
+        self, photo_counts: np.ndarray, exposure_time: float
+    ) -> np.ndarray:
+        """Noise-free signal [count], before saturation: offset plus electrons / g."""
+        return (
+            self.dark_offset + self._electrons(photo_counts, exposure_time) / self.gain
+        )
+
+    def _digitize(
+        self, well: np.ndarray, read_noise: np.ndarray | float, rounding: bool
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Counts for electrons collected in the well plus read noise, and where the
+        well is full or the ADC is at its maximum."""
+        counts = (
+            self.dark_offset
+            + (np.minimum(well, self.full_well) + read_noise) / self.gain
+        )
+        if rounding:
+            counts = np.rint(counts)
+        saturated = (well >= self.full_well) | (counts >= self.max_count)
+        return np.clip(counts, 0, self.max_count), saturated
+
+    def clip(
+        self, photo_counts: np.ndarray, exposure_time: float
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         """Noise-free counts limited by full well and the ADC, and where they were."""
-        if self.full_well_counts is None:
-            return expected_counts, None
-        limit = self.full_well_counts
-        if self.max_count is not None:
-            limit = min(limit, self.max_count)
-        return np.minimum(expected_counts, limit), expected_counts >= limit
+        if not self.can_saturate:
+            return self.expected_counts(photo_counts, exposure_time), None
+        electrons = self._electrons(photo_counts, exposure_time)
+        return self._digitize(electrons, 0.0, rounding=False)
 
     def expose(
-        self, expected_counts: np.ndarray, num_exposures: int, rng: np.random.Generator
+        self,
+        photo_counts: np.ndarray,
+        exposure_time: float,
+        num_exposures: int,
+        rng: np.random.Generator,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Mean digitized counts over the exposures, and where any saturated."""
-        expected_electrons = expected_counts * self.gain
-        total = np.zeros_like(expected_counts)
-        saturated = np.zeros(expected_counts.shape, dtype=bool)
+        expected_electrons = self._electrons(photo_counts, exposure_time)
+        total = np.zeros_like(expected_electrons)
+        saturated = np.zeros(expected_electrons.shape, dtype=bool)
         for _ in range(num_exposures):
-            electrons = rng.poisson(expected_electrons).astype(float)
-            saturated |= electrons >= self.full_well
-            electrons = np.minimum(electrons, self.full_well) + rng.normal(
-                0.0, self.read_noise, electrons.shape
-            )
-            saturated |= electrons >= self.full_well
-            electrons = np.clip(electrons, 0.0, self.full_well)
-            counts = np.clip(np.rint(electrons / self.gain), 0, self.max_count)
+            well = rng.poisson(expected_electrons).astype(float)
+            read_noise = rng.normal(0.0, self.read_noise, well.shape)
+            counts, exposure_saturated = self._digitize(well, read_noise, rounding=True)
+            saturated |= exposure_saturated
             total += counts
         return total / num_exposures, saturated

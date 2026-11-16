@@ -33,6 +33,7 @@ class L1AImage:
         exposure_time: float,
         num_averaged_exposures: int = 1,
         saturated: np.ndarray | None = None,
+        detector_temperature: float | None = None,
     ):
         image_dims = ["los", "pixelcolumn"]
         data_vars = {
@@ -54,6 +55,8 @@ class L1AImage:
         }
         if saturated is not None:
             data_vars["saturated"] = (image_dims, np.asarray(saturated, dtype=bool))
+        if detector_temperature is not None:
+            data_vars["detector_temperature"] = ((), float(detector_temperature))
         self._ds = xr.Dataset(data_vars, coords={"time": np.datetime64(time, "ns")})
 
     @property

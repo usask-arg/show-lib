@@ -205,6 +205,18 @@ def _finite_floats(ds, _cal_db):
     ]
 
 
+def _dark_within_adc(ds, _cal_db):
+    if not _has(ds, "dark_offset", "detector_adc_bits"):
+        return []
+    max_count = 2 ** int(ds["detector_adc_bits"]) - 1
+    above = np.count_nonzero(ds["dark_offset"].to_numpy() >= max_count)
+    if not above:
+        return []
+    return [
+        f"dark_offset is at or above the ADC maximum ({max_count}) at {above} pixels"
+    ]
+
+
 _DISPERSION_FUNCTIONS = ("fringe_frequency_scale", "dispersion_phase")
 _DISPERSION_GRID = ("dispersion_wavenumber", "dispersion_reference_wavenumber")
 
@@ -296,6 +308,7 @@ CONSTRAINT_CHECKS: dict[str, dict[str, Check]] = {
         "dispersion-covers-band": _dispersion_covers_band,
         "dispersion-reference": _dispersion_reference,
         "invertible": _invertible,
+        "dark-within-adc": _dark_within_adc,
         "finite-values": _finite_floats,
     },
 }

@@ -192,3 +192,10 @@ def test_cal_db_nan_values_are_rejected(make_cal_db):
     ds = make_cal_db()
     ds["detector_gain"] = ds["detector_gain"] * np.nan
     assert "finite-values" in _constraint_failures(validate(ds, "cal_db"))
+
+
+def test_cal_db_dark_offset_at_the_adc_maximum(cal_db):
+    cal_db["detector_adc_bits"] = ((), np.int64(8), {"units": "1"})
+    assert validate(cal_db, "cal_db") == []
+    cal_db["dark_offset"][0, 0] = 255.0
+    assert _constraint_failures(validate(cal_db, "cal_db")) == {"dark-within-adc"}
