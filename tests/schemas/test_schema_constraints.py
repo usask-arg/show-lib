@@ -199,3 +199,40 @@ def test_cal_db_dark_offset_at_the_adc_maximum(cal_db):
     assert validate(cal_db, "cal_db") == []
     cal_db["dark_offset"][0, 0] = 255.0
     assert _constraint_failures(validate(cal_db, "cal_db")) == {"dark-within-adc"}
+
+
+# ------------------------------------------------------------------------- L2
+def test_l2_time_not_increasing(l2):
+    l2 = l2.isel(time=[1, 0])
+    assert _constraint_failures(validate(l2, "l2")) == {"time-increasing"}
+
+
+def test_l2_altitude_not_increasing(l2):
+    l2 = l2.isel(altitude=slice(None, None, -1), altitude2=slice(None, None, -1))
+    assert _constraint_failures(validate(l2, "l2")) == {"altitude-increasing"}
+
+
+def test_l2_kernel_grid_differs_from_altitude(l2):
+    l2 = l2.assign_coords(altitude2=l2["altitude2"] + 1.0)
+    assert _constraint_failures(validate(l2, "l2")) == {"kernel-grid"}
+
+
+def test_l2_aerosol_is_all_or_nothing(l2):
+    without = l2.drop_vars([name for name in l2 if name.startswith("aerosol")])
+    without.attrs = {
+        key: value for key, value in l2.attrs.items() if not key.startswith("aerosol")
+    }
+    assert validate(without, "l2") == []
+
+    partial = l2.drop_vars("aerosol_extinction_averaging_kernel")
+    del partial.attrs["aerosol_extinction_wavelength"]
+    issues = validate(partial, "l2")
+    assert _constraint_failures(issues) == {"aerosol-complete"}
+    message = next(i.message for i in issues if "aerosol-complete" in i.location)
+    assert "aerosol_extinction_averaging_kernel" in message
+    assert "aerosol_extinction_wavelength" in message
+
+
+def test_l2_h2o_not_finite(l2):
+    l2["h2o_vmr_noise_error"][0, 0] = np.nan
+    assert _constraint_failures(validate(l2, "l2")) == {"finite-values"}

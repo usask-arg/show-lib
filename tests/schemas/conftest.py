@@ -152,3 +152,65 @@ def cal_db() -> xr.Dataset:
         },
         attrs={"schema_version": "0.4.0", "valid_from": "2026-11-03T00:00:00Z"},
     )
+
+
+NUM_ALTITUDES = 5
+
+
+@pytest.fixture
+def l2() -> xr.Dataset:
+    altitude = np.linspace(5e3, 25e3, NUM_ALTITUDES)
+    profile_dims = ["time", "altitude"]
+    kernel_dims = ["time", "altitude", "altitude2"]
+    profile_shape = (NUM_TIME, NUM_ALTITUDES)
+    kernel = np.broadcast_to(np.eye(NUM_ALTITUDES), (NUM_TIME, *2 * (NUM_ALTITUDES,)))
+
+    def per_time(value, units, dtype=float):
+        return _var(["time"], np.full(NUM_TIME, value, dtype=dtype), units)
+
+    data_vars = {
+        "latitude": per_time(52.0, "degrees_north"),
+        "longitude": per_time(-106.0, "degrees_east"),
+        "h2o_vmr": _var(profile_dims, np.full(profile_shape, 5e-6), "1"),
+        "h2o_vmr_prior": _var(profile_dims, np.full(profile_shape, 4e-6), "1"),
+        "h2o_vmr_noise_error": _var(profile_dims, np.full(profile_shape, 1e-7), "1"),
+        "h2o_vmr_solution_error": _var(profile_dims, np.full(profile_shape, 2e-7), "1"),
+        "h2o_vmr_averaging_kernel": _var(kernel_dims, kernel.copy(), "1"),
+        "aerosol_extinction": _var(profile_dims, np.full(profile_shape, 1e-6), "m-1"),
+        "aerosol_extinction_prior": _var(
+            profile_dims, np.full(profile_shape, 1e-6), "m-1"
+        ),
+        "aerosol_extinction_noise_error": _var(
+            profile_dims, np.full(profile_shape, 1e-7), "m-1"
+        ),
+        "aerosol_extinction_solution_error": _var(
+            profile_dims, np.full(profile_shape, 2e-7), "m-1"
+        ),
+        "aerosol_extinction_averaging_kernel": _var(kernel_dims, kernel.copy(), "1"),
+        "tropopause_altitude": per_time(11e3, "m"),
+        "lower_altitude_limit": per_time(6e3, "m"),
+        "upper_altitude_limit": per_time(30e3, "m"),
+        "num_los": per_time(12, "1", dtype=np.int64),
+        "cost": per_time(1.1, "1"),
+        "optimizer_status": per_time(2, "1", dtype=np.int64),
+        "converged": _var(["time"], np.ones(NUM_TIME, dtype=bool)),
+        "num_function_evaluations": per_time(7, "1", dtype=np.int64),
+        "profile_quality_flag": per_time(0, "1", dtype=np.int64),
+        "h2o_vmr_quality_flag": _var(
+            profile_dims, np.zeros(profile_shape, dtype=np.int64), "1"
+        ),
+    }
+    return xr.Dataset(
+        data_vars,
+        coords={
+            "time": _times(),
+            "altitude": _var(["altitude"], altitude, "m"),
+            "altitude2": _var(["altitude2"], altitude, "m"),
+        },
+        attrs={
+            "schema_version": "0.1.0",
+            "h2o_retrieval_space": "linear",
+            "aerosol_retrieval_space": "log",
+            "aerosol_extinction_wavelength": 1350.0,
+        },
+    )

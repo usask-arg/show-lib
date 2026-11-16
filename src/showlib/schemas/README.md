@@ -8,6 +8,7 @@ validation code and the documentation pages are generated from it.
 | `l1a.yaml`    | L1A raw detector images with geolocation                 |
 | `l1b.yaml`    | L1B calibrated radiance spectra                          |
 | `cal_db.yaml` | Calibration database: instrument characterization        |
+| `l2.yaml`     | L2 retrieved H2O profiles with aerosol and diagnostics   |
 
 These are **drafts** (`status: draft`) of the target formats. The processing code
 and the simulator have not yet been changed to match them.

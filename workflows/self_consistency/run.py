@@ -273,24 +273,27 @@ def main(
 
 
 def report(l2: xr.Dataset) -> None:
-    profile = l2.isel(time=0) if "time" in l2.dims else l2
+    profile = l2.isel(time=0)
     altitude = profile["altitude"].to_numpy()
     retrieved = profile["h2o_vmr"].to_numpy()
     truth = truth_h2o_vmr(altitude)
-    error = (
-        profile["h2o_vmr_1sigma"].to_numpy() if "h2o_vmr_1sigma" in profile else None
-    )
+    noise = profile["h2o_vmr_noise_error"].to_numpy()
+    solution = profile["h2o_vmr_solution_error"].to_numpy()
     prior = profile["h2o_vmr_prior"].to_numpy()
     print(
+        f"cost {float(profile['cost']):.3g}, converged {bool(profile['converged'])}, "
+        f"{int(profile['num_function_evaluations'])} evaluations"
+    )
+    print(
         f"{'altitude km':>11} {'truth ppm':>10} {'prior':>8} {'retrieved':>10} "
-        f"{'diff %':>8} {'1sig %':>6}"
+        f"{'diff %':>8} {'noise %':>7} {'soln %':>6}"
     )
     for i in np.flatnonzero((altitude >= 8e3) & (altitude <= 30e3)):
-        sigma = "" if error is None else f"{100 * error[i] / truth[i]:6.1f}"
         print(
             f"{altitude[i] / 1e3:11.1f} {1e6 * truth[i]:10.2f} {1e6 * prior[i]:8.2f} "
             f"{1e6 * retrieved[i]:10.2f} "
-            f"{100 * (retrieved[i] / truth[i] - 1):8.1f} {sigma}"
+            f"{100 * (retrieved[i] / truth[i] - 1):8.1f} "
+            f"{100 * noise[i] / truth[i]:7.1f} {100 * solution[i] / truth[i]:6.1f}"
         )
 
 

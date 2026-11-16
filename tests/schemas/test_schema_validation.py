@@ -15,7 +15,7 @@ def _locations(issues):
     return {issue.location for issue in _errors(issues)}
 
 
-@pytest.mark.parametrize("product", ["l1a", "l1b", "cal_db"])
+@pytest.mark.parametrize("product", ["l1a", "l1b", "cal_db", "l2"])
 def test_valid_dataset_has_no_issues(product, request):
     assert validate(request.getfixturevalue(product), product) == []
 
@@ -123,7 +123,7 @@ def test_check_passes_with_only_warnings(l1a):
     check(l1a, "l1a")
 
 
-@pytest.mark.parametrize("product", ["l1a", "l1b", "cal_db"])
+@pytest.mark.parametrize("product", ["l1a", "l1b", "cal_db", "l2"])
 def test_dataset_still_valid_after_netcdf_round_trip(product, request, tmp_path):
     path = tmp_path / f"{product}.nc"
     request.getfixturevalue(product).to_netcdf(path)

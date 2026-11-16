@@ -82,6 +82,45 @@ def _wavenumber_increasing(ds, _cal_db):
     return ["wavenumber is not strictly increasing along spectral_sample"]
 
 
+# ------------------------------------------------------------------------- L2
+def _altitude_increasing(ds, _cal_db):
+    if not _has(ds, "altitude") or ds["altitude"].ndim != 1:
+        return []
+    if np.all(np.diff(ds["altitude"].to_numpy()) > 0):
+        return []
+    return ["altitude is not strictly increasing"]
+
+
+def _kernel_grid(ds, _cal_db):
+    if not _has(ds, "altitude", "altitude2"):
+        return []
+    altitude, altitude2 = ds["altitude"].to_numpy(), ds["altitude2"].to_numpy()
+    if altitude.shape == altitude2.shape and np.array_equal(altitude, altitude2):
+        return []
+    return ["altitude2 does not equal altitude"]
+
+
+_AEROSOL_VARIABLES = (
+    "aerosol_extinction",
+    "aerosol_extinction_prior",
+    "aerosol_extinction_noise_error",
+    "aerosol_extinction_solution_error",
+    "aerosol_extinction_averaging_kernel",
+)
+_AEROSOL_ATTRIBUTES = ("aerosol_retrieval_space", "aerosol_extinction_wavelength")
+
+
+def _aerosol_complete(ds, _cal_db):
+    present = [name for name in _AEROSOL_VARIABLES if _has(ds, name)]
+    if not present:
+        return []
+    missing = [name for name in _AEROSOL_VARIABLES if not _has(ds, name)]
+    missing += [name for name in _AEROSOL_ATTRIBUTES if name not in ds.attrs]
+    if not missing:
+        return []
+    return [f"aerosol variables are present but {', '.join(missing)} missing"]
+
+
 # --------------------------------------------------------------------- CAL_DB
 def _edge_lengths(ds, _cal_db):
     return [
@@ -296,6 +335,15 @@ CONSTRAINT_CHECKS: dict[str, dict[str, Check]] = {
         "los-rows": _los_rows,
         "wavenumber-increasing": _wavenumber_increasing,
         "finite-values": _all_finite("radiance", "radiance_noise"),
+    },
+    "l2": {
+        "time-increasing": _time_increasing,
+        "altitude-increasing": _altitude_increasing,
+        "kernel-grid": _kernel_grid,
+        "aerosol-complete": _aerosol_complete,
+        "finite-values": _all_finite(
+            "h2o_vmr", "h2o_vmr_noise_error", "h2o_vmr_solution_error"
+        ),
     },
     "cal_db": {
         "edge-lengths": _edge_lengths,

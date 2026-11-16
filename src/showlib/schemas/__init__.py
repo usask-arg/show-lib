@@ -14,7 +14,7 @@ import yaml
 from showlib.schemas._constraints import CONSTRAINT_CHECKS, DEFERRED_CONSTRAINTS
 from showlib.schemas._markdown import render_markdown
 
-PRODUCTS = ("l1a", "l1b", "cal_db")
+PRODUCTS = ("l1a", "l1b", "cal_db", "l2")
 
 # numpy dtype kinds accepted for each schema dtype
 _DTYPE_KINDS = {"float": "f", "int": "iu", "bool": "b", "datetime": "M", "str": "UOS"}
