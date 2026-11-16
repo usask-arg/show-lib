@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
+import sasktran2 as sk
 import xarray as xr
 from skretrieval.core.sasktranformat import SASKTRANRadiance
+from skretrieval.retrieval.ancillary import GenericAncillary
 from skretrieval.retrieval.measvec import select
 
 from showlib.cal_db import CalibrationDatabase
@@ -65,6 +69,31 @@ def test_instrument_model_maps_weighting_functions(instrument_model):
         )
 
 
+@pytest.mark.parametrize("order", ["increasing", "shuffled"])
+def test_instrument_model_accepts_any_model_order(instrument_model, order):
+    rng = np.random.default_rng(4)
+    spectra = rng.uniform(1, 2, (len(MODEL_WAVENUMBER), 2))
+    wf = rng.uniform(0, 1, (3, len(MODEL_WAVENUMBER), 2))
+    expected = instrument_model.model_radiance(_model_radiance(spectra, wf), None)
+    index = (
+        np.arange(len(MODEL_WAVENUMBER))
+        if order == "increasing"
+        else rng.permutation(len(MODEL_WAVENUMBER))
+    )
+    ds = xr.Dataset(
+        {
+            "radiance": (["wavelength", "los", "stokes"], spectra[index, :, None]),
+            "wf_test": (["x", "wavelength", "los", "stokes"], wf[:, index, :, None]),
+        },
+        coords={"wavelength": 1e7 / MODEL_WAVENUMBER[index]},
+    )
+
+    l1 = instrument_model.model_radiance(SASKTRANRadiance.from_sasktran2(ds), None)
+
+    np.testing.assert_allclose(l1.data["radiance"], expected.data["radiance"])
+    np.testing.assert_allclose(l1.data["wf_test"], expected.data["wf_test"])
+
+
 def test_instrument_model_rejects_a_different_model_grid(instrument_model):
     model = SHOWInstrumentModel(
         instrument_model.matrices, MODEL_SAMPLES, MODEL_WAVENUMBER + 0.1
@@ -108,3 +137,33 @@ def test_measurement_flattening_matches_the_whitener(instrument_model):
     np.testing.assert_array_equal(measurement.y, radiance.ravel())
     sample, los = 2, 1
     assert measurement.y[sample * num_los + los] == radiance[sample, los]
+
+
+def test_forward_model_atmosphere_has_no_thermodynamic_derivatives():
+    """They are not state elements, and at the model's size they were most of
+    SASKTRAN2's output."""
+    altitude = np.arange(0, 60001, 5000.0)
+    forward_model = object.__new__(SHOWForwardModel)
+    forward_model._model_geometry = {
+        "meas": sk.Geometry1D(
+            0.6,
+            0.0,
+            6372e3,
+            altitude,
+            sk.InterpolationMethod.LinearInterpolation,
+            sk.GeometryType.Spherical,
+        )
+    }
+    forward_model._engine_config = sk.Config()
+    forward_model._model_wavelength = {"meas": np.array([1364.0, 1365.0])}
+    forward_model._state_vector = SimpleNamespace(add_to_atmosphere=lambda _: None)
+    forward_model._ancillary = GenericAncillary(
+        altitude, 1e5 * np.exp(-altitude / 7000), np.full(len(altitude), 250.0)
+    )
+
+    atmo = forward_model._construct_atmosphere()["meas"]
+
+    assert atmo.calculate_derivatives
+    assert not atmo.calculate_pressure_derivative
+    assert not atmo.calculate_temperature_derivative
+    assert not atmo.calculate_specific_humidity_derivative

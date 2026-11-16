@@ -147,13 +147,15 @@ class SHOWLineShapes:
         the retrieval yet (L1bImage.skretrieval_l1 raises NotImplementedError).
         """
         requested = np.sort(np.asarray(sample_wavenumber, dtype=float))
-        matrices = [
-            self.matrix(row)[self._sample_indices(_row_group(row)[0], requested)]
-            for row in rows
-        ]
-        return SHOWInstrumentModel(
-            np.stack(matrices), requested, self._model_wavenumber
-        )
+        matrices = []
+        for row in rows:
+            matrix = self.matrix(row)
+            index = self._sample_indices(_row_group(row)[0], requested)
+            # All samples, as usual: share the cached matrix rather than copy it
+            if not np.array_equal(index, np.arange(len(matrix))):
+                matrix = matrix[index]
+            matrices.append(matrix)
+        return SHOWInstrumentModel(matrices, requested, self._model_wavenumber)
 
     def noise_correlation(self, row, sample_wavenumber=None) -> np.ndarray:
         """Correlation of L1B radiance noise between the samples of one row.

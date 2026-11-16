@@ -13,14 +13,57 @@ import copy
 import numpy as np
 import sasktran2 as sk
 import skretrieval.retrieval.prior as prior
+import xarray as xr
 from skretrieval.retrieval.processing import Retrieval
+from skretrieval.retrieval.statevector.altitude import AltitudeNativeStateVector
 from skretrieval.retrieval.statevector.constituent import StateVectorElementConstituent
 
 from showlib.l2.optical import h2o_optical_property
 
 
+class SHOWStateVector(AltitudeNativeStateVector):
+    """AltitudeNativeStateVector that maps SASKTRAN2 radiances with less memory.
+
+    The weighting functions on the model grid (state size by model wavenumbers by
+    lines of sight) are the retrieval's largest arrays. skretrieval holds every
+    element's weighting functions and their concatenation at once, and modifies
+    SASKTRAN2's own weighting functions before dropping them. This writes each
+    element's weighting functions into one array as they are computed, and drops
+    SASKTRAN2's before the radiance is modified. The result is the same.
+    """
+
+    def post_process_sk2_radiances(self, radiance: xr.Dataset) -> xr.Dataset:
+        elements = [element for element in self.state_elements if element.enabled]
+        dims = radiance["radiance"].dims
+        sizes = [len(element.state()) for element in elements]
+        wf = np.empty((sum(sizes), *radiance["radiance"].shape))
+        start = 0
+        for element, size in zip(elements, sizes, strict=True):
+            element_wf = element.propagate_wf(radiance).transpose("x", *dims)
+            if element_wf.sizes["x"] != size:
+                msg = (
+                    f"{type(element).__name__} has {size} state values but "
+                    f"{element_wf.sizes['x']} weighting functions"
+                )
+                raise ValueError(msg)
+            wf[start : start + size] = element_wf.to_numpy()
+            start += size
+            del element_wf
+
+        radiance = radiance.drop_vars([key for key in radiance if key.startswith("wf")])
+        for element in elements:
+            radiance = element.modify_input_radiance(radiance)
+
+        radiance["wf"] = (["x", *dims], wf)
+        return radiance
+
+
 class SHOWRetrieval(Retrieval):
     """skretrieval Retrieval with the SHOW optical properties and state types."""
+
+    def _construct_state_vector(self):
+        state_vector = super()._construct_state_vector()
+        return SHOWStateVector(state_vector.altitude_grid, **state_vector.sv)
 
     def retrieve(
         self,
