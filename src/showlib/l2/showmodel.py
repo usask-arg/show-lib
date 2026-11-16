@@ -9,6 +9,8 @@ from skretrieval.core.radianceformat import RadianceGridded
 from skretrieval.core.sasktranformat import SASKTRANRadiance
 from skretrieval.retrieval.forwardmodel import IdealViewingSpectrograph
 
+from showlib.l2.retrieval import PER_LOS_WF
+
 if TYPE_CHECKING:
     from showlib.l2.lineshape import SHOWLineShapes
 
@@ -62,19 +64,51 @@ class SHOWInstrumentModel:
                 data[name] = radiance.data[key]
 
         (spectral,) = radiance.data.wavenumber_cminv.dims
+
+        def model_grid(key):
+            """A weighting function as (x, model, los), and its x dimension."""
+            wf = radiance.data[key].isel(stokes=0)
+            (x_dim,) = (dim for dim in wf.dims if dim not in (spectral, "los"))
+            return wf.transpose(x_dim, spectral, "los").to_numpy(), x_dim
+
         for key in list(radiance.data):
-            if key.startswith("wf"):
-                wf = radiance.data[key].isel(stokes=0)
-                (x_dim,) = (dim for dim in wf.dims if dim not in (spectral, "los"))
+            if key.startswith("wf") and key != PER_LOS_WF:
+                wf, x_dim = model_grid(key)
                 data[key] = (
                     ["wavenumber", "los", x_dim],
-                    self._map_weighting_function(
-                        wf.transpose(x_dim, spectral, "los").to_numpy(),
-                        model_order,
-                    ),
+                    self._map_weighting_function(wf, model_order),
                 )
 
+        if PER_LOS_WF in radiance.data:
+            per_los, _ = model_grid(PER_LOS_WF)
+            data["wf"] = (
+                ["wavenumber", "los", "x"],
+                self._with_per_los_columns(
+                    data["wf"].to_numpy(),
+                    radiance.data["x"].to_numpy(),
+                    self._map_weighting_function(per_los, model_order),
+                    radiance.data["x_per_los"].to_numpy(),
+                ),
+            )
+
         return RadianceGridded(data)
+
+    @staticmethod
+    def _with_per_los_columns(
+        dense: np.ndarray,
+        dense_index: np.ndarray,
+        per_los: np.ndarray,
+        per_los_start: np.ndarray,
+    ) -> np.ndarray:
+        """Full weighting functions (sample, los, state) from SHOWStateVector's
+        dense columns and per-line-of-sight elements: element e's value for line
+        of sight l is state column per_los_start[e] + l, non-zero only on l."""
+        num_samples, num_los, num_per_los = per_los.shape
+        wf = np.zeros((num_samples, num_los, len(dense_index) + num_per_los * num_los))
+        wf[:, :, dense_index] = dense
+        for los in range(num_los):
+            wf[:, los, per_los_start + los] = per_los[:, los, :]
+        return wf
 
     def _map_weighting_function(self, wf: np.ndarray, model_order) -> np.ndarray:
         """Each line of sight's matrix applied to ``wf`` (x, model, los), giving
