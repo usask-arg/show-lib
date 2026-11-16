@@ -62,7 +62,7 @@ def l1a() -> xr.Dataset:
     return xr.Dataset(
         data_vars,
         coords={"time": _times()},
-        attrs={"schema_version": "0.2.0"},
+        attrs={"schema_version": "0.3.0"},
     )
 
 
@@ -132,6 +132,9 @@ def cal_db() -> xr.Dataset:
             np.full(transmission_wavenumber.shape, 0.8),
             "1",
         ),
+        "dark_offset": _var(
+            ["los", "pixelcolumn"], np.full((NUM_LOS, NUM_COLUMNS), 100.0), "count"
+        ),
         "detector_gain": _var([], 2.0, "1"),
         "detector_read_noise": _var([], 10.0, "1"),
         "sample_wavenumber": _var(
@@ -147,5 +150,5 @@ def cal_db() -> xr.Dataset:
                 ["transmission_wavenumber"], transmission_wavenumber, "cm-1"
             )
         },
-        attrs={"schema_version": "0.3.0", "valid_from": "2026-11-03T00:00:00Z"},
+        attrs={"schema_version": "0.4.0", "valid_from": "2026-11-03T00:00:00Z"},
     )

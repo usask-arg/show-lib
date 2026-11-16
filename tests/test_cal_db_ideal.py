@@ -62,3 +62,22 @@ def test_detector_defaults_follow_the_full_well_and_adc():
     ds = ideal_calibration_database(num_rows=1, num_columns=64).ds
     np.testing.assert_allclose(float(ds["detector_gain"]), 450_000 / 2**12)
     assert float(ds["detector_read_noise"]) == 75.0
+
+
+def test_dark_defaults_are_a_noisy_offset_and_a_uniform_current():
+    ds = ideal_calibration_database(num_rows=4, num_columns=256).ds
+    offset = ds["dark_offset"].to_numpy()
+    np.testing.assert_allclose(offset.mean(), 100.0, atol=0.5)
+    np.testing.assert_allclose(offset.std(), 5.0, rtol=0.1)
+    np.testing.assert_allclose(ds["dark_current"], 10.0)
+    assert ds["dark_offset"].attrs["units"] == "count"
+
+
+def test_dark_pattern_follows_its_seed_and_zero_current_is_omitted():
+    def build(**kwargs):
+        return ideal_calibration_database(num_rows=2, num_columns=64, **kwargs).ds
+
+    np.testing.assert_array_equal(build()["dark_offset"], build()["dark_offset"])
+    assert not np.array_equal(build()["dark_offset"], build(dark_seed=1)["dark_offset"])
+    assert "dark_current" not in build(dark_current=0.0)
+    np.testing.assert_allclose(build(dark_offset_spread=0.0)["dark_offset"], 100.0)

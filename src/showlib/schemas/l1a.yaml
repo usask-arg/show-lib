@@ -1,5 +1,5 @@
 product: L1A
-schema_version: 0.2.0
+schema_version: 0.3.0
 status: draft
 description: >
   SHOW detector images of raw data with geolocation information appended. A granule
@@ -160,6 +160,18 @@ variables:
     role: acquisition
     description: Number of equal exposures averaged into the image.
 
+  detector_temperature:
+    dims: [time]
+    dtype: float
+    units: K
+    required: false
+    exclusive_min: 0
+    role: acquisition
+    open_questions: [dark-determination]
+    description: >
+      Detector temperature during the image, for a future temperature-dependent
+      dark estimate. Not yet used by L1A→L1B.
+
   actual_acquisition_time:
     dims: [time]
     dtype: float
@@ -191,7 +203,9 @@ groups:
         units: count
         required: false
         role: simulator_truth
-        description: Expected `image` before noise was applied.
+        description: >
+          Expected `image` before noise, saturation and digitization, including
+          the dark signal.
 
       target_acquisition_time:
         dims: [time]
@@ -210,7 +224,10 @@ groups:
         valid_min: 0
         valid_max: 1
         role: simulator_truth
-        description: Full-well fraction the auto-exposure targets for the brightest pixel.
+        description: >
+          Fraction of the saturation level the auto-exposure targets for the
+          brightest pixel. The saturation level is the lower of the full well and
+          the ADC range above the pixel's dark offset, in electrons.
 
       expected_peak_full_well_fraction:
         dims: [time]
@@ -218,7 +235,10 @@ groups:
         units: "1"
         required: false
         role: simulator_truth
-        description: Noise-free peak signal as a fraction of full well.
+        description: >
+          Largest noise-free photo- plus dark-current electrons of any pixel, as a
+          fraction of that pixel's saturation level (see
+          auto_exposure_full_well_fraction).
 
       noise_enabled:
         dims: []
@@ -244,4 +264,12 @@ constraints:
       los and pixelcolumn have the same lengths as in the calibration database
       used to process the granule.
 
-open_questions: []
+open_questions:
+  - id: dark-determination
+    question: How is the dark signal measured in flight?
+    context: >
+      Options include dark frames (shutter closed or a blank scene) between
+      observation sets, interpolated to each image in detector temperature, or
+      masked detector rows or columns. Dark frames may need their own flag or
+      group in L1A. Until this is decided, L1A→L1B subtracts the static dark from
+      the calibration database (its dark-model open question).

@@ -6,6 +6,8 @@ src/showlib/schemas/cal_db.yaml.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import xarray as xr
 
@@ -13,6 +15,10 @@ from showlib.cal_db import CalibrationDatabase, bin_width
 from showlib.l1a.data import L1ADataSet
 from showlib.l1b.data import L1bDataSet
 from showlib.schemas import apply_metadata, check
+
+# dark(image, cal_db): dark estimate [count] for one L1A image (the granule at one
+# time), shape (los, pixelcolumn)
+DarkModel = Callable[[xr.Dataset, CalibrationDatabase], np.ndarray]
 
 _GEOMETRY = (
     "tangent_altitude",
@@ -56,17 +62,30 @@ def inverse_operator(
     return response / (response @ flat_count_rate)[:, np.newaxis]
 
 
+def static_dark(image: xr.Dataset, cal_db: CalibrationDatabase) -> np.ndarray:
+    """dark_offset + t · dark_current, the default dark estimate."""
+    return cal_db.static_dark(float(image["exposure_time"]))
+
+
 def process_l1a_to_l1b(
     l1a: L1ADataSet,
     cal_db: CalibrationDatabase,
     apodization: float | None = 10.0,
     noise_fraction: float = 0.0,
+    dark: DarkModel = static_dark,
 ) -> L1bDataSet:
     """Process an L1A granule into an L1B granule.
 
-    apodization is the Kaiser window beta (None for a rectangular window).
-    radiance_noise propagates shot, read, and quantization noise through B, and
-    adds noise_fraction * |radiance| in quadrature.
+    The dark estimate is subtracted from each image before it is converted to a
+    count rate. apodization is the Kaiser window beta (None for a rectangular
+    window). radiance_noise propagates shot, read, and quantization noise through
+    B, and adds noise_fraction * |radiance| in quadrature. The shot noise is that
+    of the photo- and dark-current electrons, (image - dark_offset) · gain; the
+    dark estimate's own noise is not included.
+
+    dark is the dark estimate for each image, ``dark(image, cal_db)`` in counts
+    with shape (los, pixelcolumn), where ``image`` is the L1A granule at one time.
+    It defaults to the calibration database's static dark.
     """
     if apodization is not None and (not np.isfinite(apodization) or apodization < 0):
         msg = "apodization must be None or a finite, non-negative Kaiser beta"
@@ -87,11 +106,17 @@ def process_l1a_to_l1b(
     )
     gain = float(cal_db.ds["detector_gain"])
     read_noise = float(cal_db.ds["detector_read_noise"])
+    offset = cal_db.ds["dark_offset"].transpose("los", "pixelcolumn").to_numpy()
+    dark_estimate = np.stack(
+        [dark(ds.isel(time=i), cal_db) for i in range(ds.sizes["time"])]
+    )
 
-    count_rate = image / exposure_time
-    count_variance = (
-        np.clip(image * gain, 0, None) + read_noise**2 + gain**2 / 12
-    ) / (num_exposures * gain**2)
+    count_rate = (image - dark_estimate) / exposure_time
+    # Photo-electrons (image - dark) plus dark-current electrons (dark - offset)
+    shot_electrons = np.clip((image - offset) * gain, 0, None)
+    count_variance = (shot_electrons + read_noise**2 + gain**2 / 12) / (
+        num_exposures * gain**2
+    )
     rate_variance = count_variance / exposure_time**2
 
     num_samples = cal_db.ds.sizes["spectral_sample"]

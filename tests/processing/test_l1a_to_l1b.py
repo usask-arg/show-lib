@@ -156,6 +156,86 @@ def test_detector_noise_is_propagated(make_cal_db):
     assert l1b.ds.attrs["radiance_noise_model"] == "detector"
 
 
+def _with_dark(l1a: L1ADataSet, dark: np.ndarray) -> L1ADataSet:
+    """The granule with a per-image dark signal added, shape (time, los, column)."""
+    return L1ADataSet(l1a.ds.assign(image=l1a.ds["image"] + dark))
+
+
+def _dark_cal_db(make_cal_db) -> CalibrationDatabase:
+    rng = np.random.default_rng(2)
+    return CalibrationDatabase(
+        make_cal_db(
+            dark_offset=rng.uniform(90.0, 110.0, (2, 16)),
+            dark_current=rng.uniform(20.0, 40.0, (2, 16)),
+        )
+    )
+
+
+def test_the_static_dark_is_subtracted(make_cal_db):
+    cal_db = _dark_cal_db(make_cal_db)
+    clean = _l1a(cal_db)
+    dark = np.stack([cal_db.static_dark(t) for t in EXPOSURE_TIMES])
+
+    l1b = process_l1a_to_l1b(_with_dark(clean, dark), cal_db, apodization=None)
+
+    without_dark = CalibrationDatabase(make_cal_db())
+    expected = process_l1a_to_l1b(clean, without_dark, apodization=None)
+    np.testing.assert_allclose(l1b.ds["radiance"], expected.ds["radiance"])
+
+
+def test_a_dark_model_replaces_the_static_dark(make_cal_db):
+    cal_db = _dark_cal_db(make_cal_db)
+    clean = _l1a(cal_db)
+    # A pattern along the row: B's DC term would absorb a uniform dark error
+    pattern = np.random.default_rng(3).uniform(0.0, 50.0, (2, 16))
+    measured_dark = np.stack(
+        [
+            cal_db.static_dark(t) + (i + 1) * pattern
+            for i, t in enumerate(EXPOSURE_TIMES)
+        ]
+    )
+    times = list(clean.ds["time"].to_numpy())
+
+    def dark(image, model):
+        assert model is cal_db
+        return measured_dark[times.index(image["time"].to_numpy())]
+
+    l1b = process_l1a_to_l1b(
+        _with_dark(clean, measured_dark), cal_db, apodization=None, dark=dark
+    )
+    static = process_l1a_to_l1b(
+        _with_dark(clean, measured_dark), cal_db, apodization=None
+    )
+
+    without_dark = CalibrationDatabase(make_cal_db())
+    expected = process_l1a_to_l1b(clean, without_dark, apodization=None)
+    np.testing.assert_allclose(l1b.ds["radiance"], expected.ds["radiance"])
+    assert not np.allclose(static.ds["radiance"], expected.ds["radiance"])
+
+
+def test_shot_noise_counts_photo_and_dark_current_electrons(make_cal_db):
+    cal_db = _dark_cal_db(make_cal_db)
+    clean = _l1a(cal_db)
+    time_index, row = 1, 0
+    exposure_time = EXPOSURE_TIMES[time_index]
+    dark = np.stack([cal_db.static_dark(t) for t in EXPOSURE_TIMES])
+
+    l1b = process_l1a_to_l1b(_with_dark(clean, dark), cal_db, apodization=None)
+
+    gain, read_noise, num_exposures = 2.0, 10.0, 4
+    photo = clean.ds["image"].isel(time=time_index, los=row).to_numpy()
+    dark_current = cal_db.ds["dark_current"].isel(los=row).to_numpy()
+    electrons = (photo + exposure_time * dark_current) * gain
+    count_variance = (electrons + read_noise**2 + gain**2 / 12) / (
+        num_exposures * gain**2
+    )
+    operator = inverse_operator(cal_db, row, apodization=None)
+    expected = np.sqrt(operator**2 @ (count_variance / exposure_time**2))
+    np.testing.assert_allclose(
+        l1b.ds["radiance_noise"].isel(time=time_index, los=row), expected
+    )
+
+
 def test_noise_fraction_adds_in_quadrature(make_cal_db):
     cal_db = CalibrationDatabase(make_cal_db())
     l1a = _l1a(cal_db)

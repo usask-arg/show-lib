@@ -16,6 +16,8 @@ from showlib.schemas import check
 # Samples per fringe period in the default model_wavenumber grid
 _FRINGE_SAMPLES_PER_PERIOD = 20
 _TABLE_SAMPLES_PER_STEP = 4
+# Gauss-Legendre nodes along the row direction when the phase does not change
+_MIN_ROW_NODES = 4
 
 
 def bin_width(wavenumber) -> np.ndarray:
@@ -32,7 +34,7 @@ def bin_width(wavenumber) -> np.ndarray:
 
 
 def pixel_averaged_fringe(
-    ds: xr.Dataset, row: int, wavenumber, num_row_nodes: int = 4
+    ds: xr.Dataset, row: int, wavenumber, num_row_nodes: int | None = None
 ) -> np.ndarray:
     """V(y,x) · C(y,x,nu) for a calibration dataset: the fringe averaged over each
     pixel of a row, shape (num_columns, len(wavenumber)).
@@ -40,7 +42,10 @@ def pixel_averaged_fringe(
     At any position v along the row direction, the fringe phase is linear across
     the pixel, so the average across the pixel is exact: cos(mid-phase) · sinc. The
     average along the row direction uses Gauss-Legendre quadrature with
-    ``num_row_nodes`` nodes.
+    ``num_row_nodes`` nodes. By default the number of nodes follows the largest
+    phase change between the row's two edges (for example from a grating tilt):
+    4 when the phase does not change along the row, and enough for an error below
+    about 1e-10 otherwise.
     """
     wavenumber = np.atleast_1d(np.asarray(wavenumber, dtype=float))
     opd = ds["opd"].to_numpy()[row : row + 2]
@@ -52,20 +57,26 @@ def pixel_averaged_fringe(
     littrow = ds["littrow_wavenumber"].to_numpy()[row : row + 2]
     scale, phase_offset = _dispersion(ds, wavenumber)
 
-    nodes, weights = np.polynomial.legendre.leggauss(num_row_nodes)
-    result = np.zeros((ds.sizes["pixelcolumn"], len(wavenumber)))
-    for v, weight in zip(0.5 * (nodes + 1), 0.5 * weights, strict=True):
+    def edge_phase(v):
+        """Fringe phase at the column edges, at position v along the row."""
         opd_at_v = (1 - v) * opd[0] + v * opd[1]
         phase_at_v = (1 - v) * phase[0] + v * phase[1]
         littrow_at_v = (1 - v) * littrow[0] + v * littrow[1]
-
         frequency = 2 * np.pi * (wavenumber - littrow_at_v) * scale
-        edge_phase = (
+        return (
             frequency[np.newaxis, :] * opd_at_v[:, np.newaxis]
             + phase_at_v[:, np.newaxis]
             + phase_offset[np.newaxis, :]
         )
-        left, right = edge_phase[:-1], edge_phase[1:]
+
+    if num_row_nodes is None:
+        num_row_nodes = _row_nodes(np.max(np.abs(edge_phase(1.0) - edge_phase(0.0))))
+
+    nodes, weights = np.polynomial.legendre.leggauss(num_row_nodes)
+    result = np.zeros((ds.sizes["pixelcolumn"], len(wavenumber)))
+    for v, weight in zip(0.5 * (nodes + 1), 0.5 * weights, strict=True):
+        phase_at_v = edge_phase(v)
+        left, right = phase_at_v[:-1], phase_at_v[1:]
         result += (
             weight
             * np.cos(0.5 * (left + right))
@@ -75,6 +86,19 @@ def pixel_averaged_fringe(
     if "fringe_visibility" in ds:
         result *= ds["fringe_visibility"].to_numpy()[row][:, np.newaxis]
     return result
+
+
+def _row_nodes(phase_change: float) -> int:
+    """Gauss-Legendre nodes for averaging cos over a phase change [rad] along v.
+
+    _MIN_ROW_NODES when the phase is constant along the row; otherwise enough for
+    an error below about 1e-10.
+    """
+    return (
+        _MIN_ROW_NODES
+        + int(np.ceil(phase_change / 2))
+        + int(np.ceil(np.sqrt(phase_change)))
+    )
 
 
 def _dispersion(
@@ -155,7 +179,9 @@ class CalibrationDatabase:
         values = self._ds["spectral_transmission"].to_numpy()[order]
         return np.interp(wavenumber, grid[order], values, left=0.0, right=0.0)
 
-    def fringe(self, row: int, wavenumber, num_row_nodes: int = 4) -> np.ndarray:
+    def fringe(
+        self, row: int, wavenumber, num_row_nodes: int | None = None
+    ) -> np.ndarray:
         """V(y,x) · C(y,x,nu): the fringe averaged over each pixel of a row.
 
         Returns an array of shape (num_columns, len(wavenumber)); see
@@ -178,12 +204,21 @@ class CalibrationDatabase:
             / photon_energy_j
         )
 
+    def static_dark(self, exposure_time: float) -> np.ndarray:
+        """D = dark_offset + t · dark_current [count], shape (num_rows, num_columns)."""
+        dark = self._ds["dark_offset"].transpose("los", "pixelcolumn").to_numpy()
+        if "dark_current" in self._ds:
+            rate = self._ds["dark_current"].transpose("los", "pixelcolumn").to_numpy()
+            dark = dark + exposure_time * rate
+        return dark
+
     def forward_operator(
         self, row: int, wavenumber, bin_width, exposure_time: float
     ) -> np.ndarray:
         """A: counts per unit radiance for each pixel of a row and spectral bin.
 
-        Returns an array of shape (num_columns, len(wavenumber)).
+        Returns an array of shape (num_columns, len(wavenumber)). Excludes the dark
+        signal (static_dark), which adds to the image independently of radiance.
         """
         etendue = self._ds["pixel_etendue"].to_numpy()[row]
         gain = float(self._ds["detector_gain"])

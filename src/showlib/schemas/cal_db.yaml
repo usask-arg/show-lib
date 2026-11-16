@@ -1,5 +1,5 @@
 product: CAL_DB
-schema_version: 0.3.0
+schema_version: 0.4.0
 status: draft
 description: >
   SHOW calibration database: the parameters of the instrument forward model A, which
@@ -9,11 +9,13 @@ description: >
 
 model:
   forward: |
-    The signal of detector pixel (y, x), in counts, for an image with exposure
+    The expected signal of detector pixel (y, x), in counts, for an exposure of
     time t (from L1A):
 
-      I(y,x) = (t / g) · ε(y,x) · ∫ T(ν) · L(ν) · (dλ/dν) / E(ν)
-                 · [ 1 + V(y,x) · C(y,x,ν) ] dν
+      I(y,x) = D(y,x) + (t / g) · ε(y,x) · ∫ T(ν) · L(ν) · (dλ/dν) / E(ν)
+                          · [ 1 + V(y,x) · C(y,x,ν) ] dν
+
+      D(y,x) = o(y,x) + t · k(y,x)
 
       C(y,x,ν) = (1 / |P|) ∬_P cos( 2π (ν − σ(v)) · s(ν) · d(u,v)
                                    + φ(u,v) + ψ(ν) ) du dv
@@ -22,6 +24,9 @@ model:
       L(ν)    spectral radiance [W m-2 sr-1 nm-1]
       dλ/dν   1e7 / ν² [nm per cm-1], converting per-nm radiance to per-wavenumber
       E(ν)    photon energy h·c·ν [J]
+      D       dark signal [count]
+      o       dark_offset [count], the bias at zero exposure
+      k       dark_current [count s-1] (0 when absent)
       g       detector_gain [electrons per count]
       ε       pixel_etendue [m2 sr]
       T       spectral_transmission
@@ -34,8 +39,9 @@ model:
     C is the fringe averaged over the pixel area P, with uniform response across
     the pixel. u runs across the pixel along pixelcolumn and v along los, each
     from one edge to the other. d and φ are bilinear between the four corner
-    values and σ is linear between the two row edges. The pixel average therefore includes fringe tilt across the pixel and
-    the variation of OPD and Littrow wavenumber along both detector axes. When d is
+    values and σ is linear between the two row edges. The pixel average therefore
+    includes fringe tilt across the pixel and the variation of OPD and Littrow
+    wavenumber along both detector axes. When d is
     linear across the pixel, σ and φ are constant, and there is no dispersion
     (s = 1, ψ = 0), C reduces to sinc((ν − σ)·w) · cos(2π(ν − σ)·d_centre + φ)
     for a pixel of OPD width w.
@@ -44,7 +50,42 @@ model:
     dispersion from the grating and prisms), and ψ(ν) adds a wavenumber-dependent
     phase (unequal glass in the two arms). Both are interpolated linearly in
     wavenumber from dispersion_wavenumber.
+
+    Grating tilt. A tilt ε of one grating about the dispersion axis tilts that
+    arm's wavefront by 2ε along y and adds a fringe phase ±2π · 2εy · ν, where y is
+    the height on the grating (the detector position divided by the detector-to-
+    grating magnification). The sign is + when the tilted grating is in the arm
+    whose path counts positive in opd. Because
+      2π · 2εy · ν = 2π (ν − σ) · 2εy + 2π σ · 2εy,
+    the tilt is the corner values
+      opd          → opd ± 2εy
+      fringe_phase → fringe_phase ± 2π σ · 2εy
+    with y and σ at each corner's row edge. This is exact when σ is constant
+    across the row; OPD then varies along los, and the pixel average includes the
+    contrast lost across the row height Δy (on the grating), a factor
+    sinc(2εΔy · ν) with sinc(x) = sin(πx) / (πx). Two caveats:
+      - s(ν) multiplies the whole OPD, including the tilt term 2εy, but the tilt
+        phase 2π · 2εy · ν is not dispersed by the grating. The mapping is
+        therefore exact only without fringe-frequency dispersion (s = 1).
+      - Measuring opd and fringe_phase at a corner needs fringe phases at two or
+        more wavenumbers. At a single wavenumber an OPD offset δ changes the phase
+        by the constant 2π (ν − σ) δ, which a fringe_phase offset reproduces.
+
+    Detector. Each exposure has Poisson shot noise on the photo-electrons and the
+    dark-current electrons (t · k · g), Gaussian read noise, and is quantized to
+    integer counts. A pixel saturates at detector_full_well electrons or when the
+    signal, including the offset o, reaches the ADC maximum
+    2^detector_adc_bits − 1 counts, whichever comes first.
   inverse: |
+    L1A→L1B first subtracts a dark estimate D from each image and divides by t,
+    giving the count rate. D defaults to the static dark o + t · k from this
+    database; the processing accepts any other estimate (for example one
+    interpolated between dark frames), so the method can change without changing
+    the rest of L1A→L1B. The shot noise is that of the photo- and dark-current
+    electrons, (S − o) · g for image S, so the variance of a mean of N exposures
+    is ((S − o) · g + σ_read² + g² / 12) / (N g²) counts². The dark estimate's
+    own noise is not included.
+
     B, for each row, is a linear least-squares inversion of the same
     pixel-averaged model evaluated at that row's sample_wavenumber, with a DC term
     and the L1B apodization window applied over the row's OPD. B is a processing
@@ -215,6 +256,31 @@ variables:
     description: Vacuum wavenumbers at which spectral_transmission is tabulated.
 
   # ------------------------------------------------------------------- detector
+  dark_offset:
+    dims: [los, pixelcolumn]
+    dtype: float
+    units: count
+    required: true
+    valid_min: 0
+    role: instrument
+    open_questions: [dark-model]
+    description: >
+      Signal of each pixel at zero exposure time (bias). Subtracted in L1A→L1B and
+      excluded from the shot-noise estimate.
+
+  dark_current:
+    dims: [los, pixelcolumn]
+    dtype: float
+    units: count s-1
+    required: false
+    default: 0.0
+    valid_min: 0
+    role: instrument
+    open_questions: [dark-model]
+    description: >
+      Dark signal rate of each pixel at the detector's operating temperature. Its
+      electrons have shot noise like the photo-electrons.
+
   detector_gain:
     dims: []
     dtype: float
@@ -315,7 +381,24 @@ constraints:
       For every row, the pixel-averaged model evaluated at sample_wavenumber
       (including the DC term) has full column rank and a condition number below
       1e6. Well-posed calibrations are about 1.5; aliased samples are rejected.
+  - id: dark-within-adc
+    rule: >
+      If detector_adc_bits is present, dark_offset is below the ADC maximum,
+      2^detector_adc_bits − 1 counts, at every pixel.
   - id: finite-values
     rule: Every floating-point value in the database is finite.
 
-open_questions: []
+open_questions:
+  - id: dark-model
+    question: >
+      How is the dark estimate D for each image determined in flight, and what
+      does the calibration database need to hold for it?
+    context: >
+      Candidates are dark frames (shutter closed or a blank scene) between
+      observation sets, with D for each image interpolated in detector
+      temperature between the bracketing dark frames, or masked detector rows or
+      columns. Temperature interpolation needs detector_temperature in L1A and
+      possibly a per-pixel temperature coefficient here. L1A→L1B takes D as an
+      input, so the method can change without changing the rest of the
+      processing. Until it is decided, D is the static dark_offset +
+      t · dark_current, and the dark estimate's own noise is not propagated.

@@ -38,6 +38,8 @@ def _cal_db(
     transmission: float = 0.8,
     detector_gain: float = 2.0,
     detector_read_noise: float = 10.0,
+    dark_offset: float | np.ndarray = 0.0,
+    dark_current: float | np.ndarray | None = None,
     transmission_range: tuple[float, float] | None = None,
 ) -> xr.Dataset:
     """Calibration database for a centred, uniform OPD grid unless overridden.
@@ -66,6 +68,10 @@ def _cal_db(
             ["transmission_wavenumber"],
             np.full(transmission_wavenumber.shape, transmission),
         ),
+        "dark_offset": (
+            ["los", "pixelcolumn"],
+            np.broadcast_to(dark_offset, (num_rows, num_columns)).copy(),
+        ),
         "detector_gain": ((), detector_gain),
         "detector_read_noise": ((), detector_read_noise),
         "sample_wavenumber": (
@@ -75,6 +81,11 @@ def _cal_db(
     }
     if fringe_phase is not None:
         data_vars["fringe_phase"] = (["los_edge", "pixelcolumn_edge"], fringe_phase)
+    if dark_current is not None:
+        data_vars["dark_current"] = (
+            ["los", "pixelcolumn"],
+            np.broadcast_to(dark_current, (num_rows, num_columns)).copy(),
+        )
     if fringe_visibility is not None:
         data_vars["fringe_visibility"] = (["los", "pixelcolumn"], fringe_visibility)
 
