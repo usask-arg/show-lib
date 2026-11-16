@@ -18,9 +18,11 @@ from showlib.cal_db.ideal import ideal_calibration_database
 from showlib.l1a.data import L1ADataSet
 from showlib.l1a.simulate import simulate_l1a
 from showlib.l2.config import load_retrieval_config
+from showlib.l2.data import L2DataSet
 from showlib.l2.lineshape import SHOWLineShapes
 from showlib.processing.l1a_to_l1b import process_l1a_to_l1b
 from showlib.processing.l1b_to_l2 import process_l1b_to_l2_file
+from showlib.schemas import validate
 
 NAME = "20261110T1200.v0_0_1.TEST"
 TANGENT_ALTITUDES_M = np.arange(10e3, 21e3, 2e3)
@@ -105,7 +107,12 @@ def test_retrieval_runs_end_to_end(tmp_path, caplog, noise_fraction, correlated)
     with caplog.at_level(logging.WARNING):
         process_l1b_to_l2_file(l1b_path, tmp_path / "l2", cal_db_path, config)
 
-    with xr.open_dataset(tmp_path / "l2" / f"HAWC_H2OL_Wvapor_L2_{NAME}.nc") as l2:
-        assert np.all(np.isfinite(l2["h2o_vmr"]))
-        assert np.all(np.isfinite(l2["h2o_vmr_1sigma"]))
+    l2 = L2DataSet.from_file(tmp_path / "l2" / f"HAWC_H2OL_Wvapor_L2_{NAME}.nc").ds
+    assert validate(l2, "l2") == []
+    assert l2.sizes["time"] == 1
+    assert np.all(l2["aerosol_extinction"] > 0)
+    assert int(l2["num_function_evaluations"].isel(time=0)) <= 2
+    assert int(l2["num_los"].isel(time=0)) <= len(TANGENT_ALTITUDES_M)
+    assert l2.attrs["h2o_retrieval_space"] == "linear"
+    assert l2.attrs["aerosol_retrieval_space"] == "log"
     assert ("Treating L1B samples as independent" in caplog.text) is not correlated

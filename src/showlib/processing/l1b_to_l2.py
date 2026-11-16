@@ -12,7 +12,7 @@ from showlib.cal_db import CalibrationDatabase
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.ancillary import Ancillary
 from showlib.l2.config import altitude_grid, engine_kwargs, load_retrieval_config
-from showlib.l2.data import L2FileWriter, L2Profile
+from showlib.l2.data import AerosolProfile, L2DataSet, L2Profile
 from showlib.l2.lineshape import SHOWLineShapes
 from showlib.l2.noise import noise_correlation_applies, whitened_measurement_vector
 from showlib.l2.preprocessor import l2_preprocessor
@@ -63,9 +63,8 @@ def process_l1b_to_l2_file(
     if not out_file.exists():
         logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
-        writer = L2FileWriter(retrieve_l2(l1b_data, por_data, cal_db, config))
-
-        writer.save(out_file)
+        profiles = retrieve_l2(l1b_data, por_data, cal_db, config)
+        L2DataSet.from_profiles(profiles).save(out_file)
 
 
 def process_l1b_to_l2(
@@ -177,23 +176,74 @@ def process_l1b_to_l2(
 
         results = ret.retrieve()
 
-        ref_lat = l1b_image.reference_latitude()["meas"]
-        ref_lon = l1b_image.reference_longitude()["meas"]
-
         l2s.append(
-            L2Profile(
-                altitude_m=results["state"].altitude.to_numpy(),
-                h2o_vmr=results["state"].h2o_vmr.to_numpy(),
-                h2o_vmr_1sigma=results["state"].h2o_vmr_1sigma_error.to_numpy(),
-                h2o_vmr_prior=results["state"].h2o_vmr_prior.to_numpy(),
+            _profile(
+                results,
+                state_kwargs,
+                time=l1b_image.ds["time"].to_numpy(),
+                latitude=l1b_image.reference_latitude()["meas"],
+                longitude=l1b_image.reference_longitude()["meas"],
                 tropopause_altitude=float(por_image.tropopause_altitude.to_numpy()),
-                averaging_kernel=results["state"].h2o_vmr_averaging_kernel.to_numpy(),
-                latitude=ref_lat,
-                longitude=ref_lon,
-                time=l1b_image.ds.time,
+                lower_altitude_limit=retrieval_lower_bound,
+                upper_altitude_limit=upper_bound,
+                num_los=len(skl1["meas"].data.los),
             )
         )
     return l2s
+
+
+_AEROSOL = "stratospheric_aerosol"
+_AEROSOL_EXTINCTION = f"{_AEROSOL}_extinction_per_m"
+# The default nominal_wavelength of aerosol_extinction_profile
+_DEFAULT_AEROSOL_WAVELENGTH_NM = 745.0
+
+
+def _space(log_space: bool) -> str:
+    return "log" if log_space else "linear"
+
+
+def _profile(results: dict, state_kwargs: dict, **profile_kwargs) -> L2Profile:
+    """An L2 profile from SHOWRetrieval.retrieve's results.
+
+    ``state`` holds the noise errors and ``solution_state`` the solution errors
+    (see SHOWRetrieval.retrieve). The retrieved surface albedo is not stored.
+    """
+    state, solution = results["state"], results["solution_state"]
+    optimizer = results["minimizer"]["minimizer"]
+
+    aerosol = None
+    aerosol_cfg = state_kwargs["aerosols"][_AEROSOL]
+    if aerosol_cfg.get("enabled", True):
+        aerosol = AerosolProfile(
+            extinction=state[_AEROSOL_EXTINCTION].to_numpy(),
+            prior=state[f"{_AEROSOL_EXTINCTION}_prior"].to_numpy(),
+            noise_error=state[f"{_AEROSOL_EXTINCTION}_1sigma_error"].to_numpy(),
+            solution_error=solution[f"{_AEROSOL_EXTINCTION}_1sigma_error"].to_numpy(),
+            averaging_kernel=state[
+                f"{_AEROSOL_EXTINCTION}_averaging_kernel"
+            ].to_numpy(),
+            retrieval_space=_space(aerosol_cfg.get("log_space", False)),
+            wavelength_nm=aerosol_cfg.get(
+                "nominal_wavelength", _DEFAULT_AEROSOL_WAVELENGTH_NM
+            ),
+        )
+
+    return L2Profile(
+        altitude=state["altitude"].to_numpy(),
+        h2o_vmr=state["h2o_vmr"].to_numpy(),
+        h2o_vmr_prior=state["h2o_vmr_prior"].to_numpy(),
+        h2o_vmr_noise_error=state["h2o_vmr_1sigma_error"].to_numpy(),
+        h2o_vmr_solution_error=solution["h2o_vmr_1sigma_error"].to_numpy(),
+        h2o_vmr_averaging_kernel=state["h2o_vmr_averaging_kernel"].to_numpy(),
+        h2o_retrieval_space=_space(
+            state_kwargs["absorbers"]["h2o"].get("log_space", False)
+        ),
+        cost=float(optimizer.cost),
+        optimizer_status=int(optimizer.status),
+        num_function_evaluations=int(optimizer.nfev),
+        aerosol=aerosol,
+        **profile_kwargs,
+    )
 
 
 if __name__ == "__main__":
