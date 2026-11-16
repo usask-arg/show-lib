@@ -22,6 +22,7 @@ observation:
   upper_bound_m: 30000            # highest tangent altitude used
   lower_bound_m: null             # lowest tangent altitude; null uses the preprocessor's estimate
   row_reduction: 1                # use every n-th detector row
+  row_averaging: 1                # then average groups of n adjacent rows into one line of sight
   low_wavenumber_filter_cminv: 0
   high_wavenumber_filter_cminv: 1.0e+10
   override_los: false

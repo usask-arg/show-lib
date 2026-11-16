@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from showlib.l1b.data import L1bDataSet, L1bImage
+from showlib.l1b.data import L1bDataSet, L1bImage, average_rows
 from showlib.schemas import SchemaValidationError
 
 NUM_SAMPLES = 10
@@ -226,3 +226,107 @@ def test_granule_round_trip(tmp_path):
     np.testing.assert_array_equal(
         granule.image(1).skretrieval_l1()["meas"].data["radiance"], 2.0
     )
+
+
+# ---------------------------------------------------------------- row averaging
+def _varied_image(**overrides):
+    """An image whose rows differ, as an xarray Dataset at one time."""
+    rng = np.random.default_rng(0)
+    radiance = rng.uniform(1.0, 2.0, (NUM_LOS, NUM_SAMPLES))
+    fields = {
+        "radiance": radiance,
+        "radiance_noise": rng.uniform(0.01, 0.02, (NUM_LOS, NUM_SAMPLES)),
+        "relative_solar_azimuth_angle": np.array([179.0, -179.0, 10.0, 20.0, 30.0]),
+        "los_azimuth_angle": np.array([359.0, 1.0, 90.0, 90.0, 90.0]),
+        **overrides,
+    }
+    return _l1b_image(**fields).ds
+
+
+def test_averaged_rows_have_the_mean_radiance_and_combined_noise():
+    image = _varied_image()
+
+    averaged, groups = average_rows(image, 2)
+
+    assert groups == [(0, 1), (2, 3), (4,)]
+    np.testing.assert_array_equal(averaged["los"], [0, 2, 4])
+    radiance = image["radiance"].to_numpy()
+    noise = image["radiance_noise"].to_numpy()
+    np.testing.assert_allclose(averaged["radiance"][0], radiance[:2].mean(axis=0))
+    np.testing.assert_allclose(averaged["radiance"][2], radiance[4])
+    np.testing.assert_allclose(
+        averaged["radiance_noise"][1], np.sqrt((noise[2:4] ** 2).sum(axis=0)) / 2
+    )
+    np.testing.assert_allclose(averaged["radiance_noise"][2], noise[4])
+    np.testing.assert_allclose(averaged["tangent_altitude"], [7500.0, 17500.0, 25000.0])
+    np.testing.assert_array_equal(averaged["wavenumber"], np.tile(WAVENUMBER, (3, 1)))
+    assert averaged["radiance"].dims == ("los", "spectral_sample")
+    assert averaged["radiance"].attrs == image["radiance"].attrs
+
+
+def test_angles_are_averaged_on_the_circle():
+    averaged, _ = average_rows(_varied_image(), 2)
+
+    assert abs(abs(float(averaged["relative_solar_azimuth_angle"][0])) - 180) < 1e-9
+    np.testing.assert_allclose(averaged["relative_solar_azimuth_angle"][1], 15.0)
+    assert (
+        min(
+            float(averaged["los_azimuth_angle"][0]),
+            360 - float(averaged["los_azimuth_angle"][0]),
+        )
+        < 1e-9
+    )
+    assert np.all(
+        (averaged["los_azimuth_angle"] >= 0) & (averaged["los_azimuth_angle"] < 360)
+    )
+
+
+def test_a_group_with_a_saturated_row_is_saturated():
+    image = _varied_image()
+    image["saturated_fraction"][:] = [0.0, 0.25, 0.0, 0.0, 0.0]
+
+    averaged, _ = average_rows(image, 2)
+
+    np.testing.assert_allclose(averaged["saturated_fraction"], [0.25, 0.0, 0.0])
+
+
+def test_averaged_rows_must_share_a_wavenumber_grid():
+    image = _varied_image()
+    image["wavenumber"] = image["wavenumber"].copy(
+        data=image["wavenumber"].to_numpy() + np.arange(NUM_LOS)[:, None] * 0.01
+    )
+    with pytest.raises(ValueError, match="wavenumber grid"):
+        average_rows(image, 2)
+
+
+@pytest.mark.parametrize(
+    ("num_rows", "error"), [(0, ValueError), (1.5, TypeError), (True, TypeError)]
+)
+def test_row_averaging_must_be_a_positive_integer(num_rows, error):
+    with pytest.raises(error, match="row_averaging"):
+        average_rows(_varied_image(), num_rows)
+
+
+def test_averaging_one_row_changes_nothing():
+    image = _varied_image()
+    averaged, groups = average_rows(image, 1)
+    assert groups == [(row,) for row in range(NUM_LOS)]
+    np.testing.assert_allclose(averaged["radiance"], image["radiance"])
+    np.testing.assert_allclose(averaged["radiance_noise"], image["radiance_noise"])
+
+
+def test_retrieval_rows_are_groups_after_reduction_and_limits():
+    granule = _granule()
+
+    image = granule.image(1, row_reduction=1, row_averaging=2, low_alt=10000)
+    # Groups at 7.5, 17.5 and 25 km; the first is below the limit
+    assert image.retrieval_rows() == [(2, 3), (4,)]
+    np.testing.assert_array_equal(
+        image.ds["tangent_altitude"], [7500.0, 17500.0, 25000.0]
+    )
+
+    reduced = granule.image(1, row_reduction=2, row_averaging=2)
+    assert reduced.retrieval_rows() == [(0, 2), (4,)]
+    assert granule.image(1).retrieval_rows() == [0, 1, 2, 3, 4]
+    l1 = image.skretrieval_l1()
+    np.testing.assert_allclose(l1["meas"].data["tangent_altitude"], [17500.0, 25000.0])
