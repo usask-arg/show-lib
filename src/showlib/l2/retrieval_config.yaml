@@ -27,12 +27,14 @@ observation:
   high_wavenumber_filter_cminv: 1.0e+10
   override_los: false
 
-# SASKTRAN2 engine settings shared by both stages (sasktran2.Config attributes)
+# SASKTRAN2 engine settings shared by both stages (sasktran2.Config attributes).
+# A stage's `engine` section overrides any of them for that stage.
 engine:
   num_threads: 1
   los_refraction: true
   multiple_scatter_source: TwoStream   # a sasktran2.MultipleScatterSource name
   num_streams: 2
+  wavelength_batch_size: 128
 
 # scipy least_squares settings, shared by both stages
 minimizer:
@@ -50,7 +52,11 @@ preprocessor:
   # Required: a weakly H2O-absorbing sample wavenumber in the band, or "auto" to
   # pick the in-band sample with the least H2O absorption (weakest_h2o_sample)
   wavenumber_cminv: null
-  engine: {}                      # stage-specific additions to `engine`
+  # The radiative transfer covers only the model grid that the sample's line
+  # shape needs: all but this fraction of its absolute weight. null uses the
+  # whole model grid.
+  line_shape_tolerance: 1.0e-3
+  engine: {}                      # overrides of the shared `engine` settings
   low_altitude:
     smoothing_los: 5              # centred rolling mean over lines of sight
     ratio_threshold: 0.1          # rows with |1 - measured/modelled| above this are unusable
@@ -83,8 +89,7 @@ retrieval:
   # Use the L1B noise correlation between samples (from apodization) by whitening
   # each line of sight; false treats the samples as independent
   noise_correlation: true
-  engine:
-    wavelength_batch_size: 128
+  engine: {}                      # overrides of the shared `engine` settings
   state:
     absorbers:
       h2o:

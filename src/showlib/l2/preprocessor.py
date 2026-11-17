@@ -107,6 +107,10 @@ def l2_preprocessor(
                     "kwargs": {
                         "line_shapes": line_shapes,
                         "rows": l1b_image.retrieval_rows(),
+                        # Model only the selected sample's line-shape window
+                        "line_shape_tolerance": config["preprocessor"][
+                            "line_shape_tolerance"
+                        ],
                     },
                     "class": SHOWForwardModel,
                 },

@@ -98,8 +98,34 @@ def test_engine_kwargs_combine_shared_and_stage_settings():
 
     assert preprocessor["num_threads"] == 8
     assert preprocessor["multiple_scatter_source"] is sk.MultipleScatterSource.TwoStream
-    assert "wavelength_batch_size" not in preprocessor
+    assert preprocessor["wavelength_batch_size"] == 128
     assert retrieval["wavelength_batch_size"] == 128
+
+
+def test_a_stage_can_override_a_shared_engine_setting():
+    config = load_retrieval_config(
+        {
+            **REQUIRED,
+            "preprocessor": {
+                **REQUIRED["preprocessor"],
+                "engine": {"wavelength_batch_size": 32},
+            },
+        }
+    )
+    assert engine_kwargs(config, "preprocessor")["wavelength_batch_size"] == 32
+    assert engine_kwargs(config, "retrieval")["wavelength_batch_size"] == 128
+
+
+def test_a_stage_cannot_add_an_unknown_engine_setting():
+    with pytest.raises(ValueError, match=r"preprocessor\.engine\.num_stream"):
+        load_retrieval_config(
+            {"preprocessor": {**REQUIRED["preprocessor"], "engine": {"num_stream": 4}}}
+        )
+
+
+def test_preprocessor_line_shape_tolerance_has_a_default():
+    config = load_retrieval_config(REQUIRED)
+    assert config["preprocessor"]["line_shape_tolerance"] == 1e-3
 
 
 def test_loads_a_yaml_file_from_a_string_path(tmp_path):
