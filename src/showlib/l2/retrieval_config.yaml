@@ -58,9 +58,13 @@ preprocessor:
   line_shape_tolerance: 1.0e-3
   engine: {}                      # overrides of the shared `engine` settings
   low_altitude:
-    smoothing_los: 5              # centred rolling mean over lines of sight
-    ratio_threshold: 0.1          # rows with |1 - measured/modelled| above this are unusable
-    fallback_m: 8000.0            # used when no row exceeds the threshold
+    # Searching up from the lowest row, the retrieval starts above the bad rows
+    # below the first min_good_rows good ones (lowest_usable_altitude)
+    smoothing_los: 5              # centred rolling mean over lines of sight, in altitude order
+    ratio_threshold: 0.1          # rows with |1 - measured/modelled| above this are unusable...
+    noise_sigma: 3.0              # ...by more than this many sigma of the smoothed ratio noise
+    min_good_rows: 5              # consecutive good rows that end the bad region
+    fallback_m: 8000.0            # used when no bad row is below the good rows, or there are none
   state:
     absorbers:
       h2o:
