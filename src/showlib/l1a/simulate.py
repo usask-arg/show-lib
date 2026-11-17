@@ -82,22 +82,16 @@ def simulate_l1a(
 
     detector = _Detector.from_calibration(cal_db, noise or exposure_time is None)
     widths = bin_width(wavenumber)
-    count_rate_operators = [
-        cal_db.forward_operator(row, wavenumber, widths, exposure_time=1.0)
-        for row in range(cal_db.num_rows)
-    ]
+    # One row's forward operator at a time, applied to every image: each operator
+    # is (num_columns, len(wavenumber)), too large to hold for every row at once
+    count_rates = np.empty((radiance.shape[0], cal_db.num_rows, cal_db.num_columns))
+    for row in range(cal_db.num_rows):
+        operator = cal_db.forward_operator(row, wavenumber, widths, exposure_time=1.0)
+        count_rates[:, row] = radiance[:, row] @ operator.T
     rng = np.random.default_rng(seed)
 
     images, noiseless, peak_fraction = [], [], []
-    for image_radiance, image_geometry in zip(radiance, geometry, strict=True):
-        count_rate = np.stack(
-            [
-                operator @ spectrum
-                for operator, spectrum in zip(
-                    count_rate_operators, image_radiance, strict=True
-                )
-            ]
-        )
+    for count_rate, image_geometry in zip(count_rates, geometry, strict=True):
         image_exposure = (
             exposure_time
             if exposure_time is not None

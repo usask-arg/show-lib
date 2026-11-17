@@ -11,7 +11,7 @@ from showlib.l2.lineshape import (
     apodization_from_attrs,
     instrument_line_shape,
 )
-from showlib.processing.l1a_to_l1b import process_l1a_to_l1b
+from showlib.processing.l1a_to_l1b import inverse_operator, process_l1a_to_l1b
 
 
 def _non_ideal_cal_db(make_cal_db) -> CalibrationDatabase:
@@ -211,3 +211,56 @@ def test_from_l1b_rejects_a_slightly_shifted_grid(make_cal_db):
     shifted = L1bDataSet(l1b.ds.assign_coords(wavenumber=l1b.ds["wavenumber"] + 0.01))
     with pytest.raises(ValueError, match="does not match"):
         SHOWLineShapes.from_l1b(cal_db, shifted)
+
+
+# ---------------------------------------------------------------- row groups
+def test_a_row_group_has_the_mean_line_shape(make_cal_db):
+    cal_db = _non_ideal_cal_db(make_cal_db)
+    line_shapes = SHOWLineShapes(cal_db, apodization=10.0, model_res_cminv=0.05)
+
+    np.testing.assert_allclose(
+        line_shapes.matrix((0, 1)),
+        0.5 * (line_shapes.matrix(0) + line_shapes.matrix(1)),
+    )
+    np.testing.assert_array_equal(line_shapes.matrix((1,)), line_shapes.matrix(1))
+    np.testing.assert_array_equal(
+        line_shapes.matrix(np.int64(1)), line_shapes.matrix(1)
+    )
+
+
+def test_a_row_group_has_the_noise_correlation_of_a_mean(make_cal_db):
+    cal_db = _non_ideal_cal_db(make_cal_db)
+    line_shapes = SHOWLineShapes(cal_db, apodization=10.0, model_res_cminv=0.05)
+
+    operators = [inverse_operator(cal_db, row, 10.0) for row in (0, 1)]
+    covariance = sum(operator @ operator.T for operator in operators) / 4
+    sigma = np.sqrt(np.diag(covariance))
+    np.testing.assert_allclose(
+        line_shapes.noise_correlation((0, 1)), covariance / np.outer(sigma, sigma)
+    )
+    samples = cal_db.sample_wavenumber(0)[[2, 0]]
+    np.testing.assert_allclose(
+        line_shapes.noise_correlation((0, 1), samples),
+        line_shapes.noise_correlation((0, 1))[np.ix_([2, 0], [2, 0])],
+    )
+
+
+def test_instrument_model_mixes_rows_and_groups(make_cal_db):
+    cal_db = _non_ideal_cal_db(make_cal_db)
+    line_shapes = SHOWLineShapes(cal_db, apodization=None, model_res_cminv=0.05)
+    samples = cal_db.sample_wavenumber(0)
+
+    model = line_shapes.instrument_model([(0, 1), 1], samples)
+
+    np.testing.assert_allclose(model.matrices[0], line_shapes.matrix((0, 1)))
+    np.testing.assert_allclose(model.matrices[1], line_shapes.matrix(1))
+
+
+def test_rows_with_different_samples_cannot_be_averaged(make_cal_db):
+    ds = make_cal_db(num_rows=2)
+    ds["sample_wavenumber"][1] = ds["sample_wavenumber"][1] - 0.625
+    line_shapes = SHOWLineShapes(CalibrationDatabase(ds), apodization=None)
+    with pytest.raises(ValueError, match="different sample wavenumbers"):
+        line_shapes.matrix((0, 1))
+    with pytest.raises(ValueError, match="different sample wavenumbers"):
+        line_shapes.noise_correlation((0, 1))

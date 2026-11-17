@@ -73,8 +73,13 @@ def _program_of_record(altitude_m: np.ndarray) -> xr.Dataset:
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize(("noise_fraction", "correlated"), [(0.0, True), (0.01, False)])
-def test_retrieval_runs_end_to_end(tmp_path, caplog, noise_fraction, correlated):
+@pytest.mark.parametrize(
+    ("noise_fraction", "correlated", "row_averaging"),
+    [(0.0, True, 1), (0.01, False, 1), (0.0, True, 2)],
+)
+def test_retrieval_runs_end_to_end(
+    tmp_path, caplog, noise_fraction, correlated, row_averaging
+):
     cal_db = ideal_calibration_database(len(TANGENT_ALTITUDES_M), num_columns=256)
     cal_db_path = tmp_path / "cal_db.nc"
     cal_db.ds.to_netcdf(cal_db_path)
@@ -88,7 +93,7 @@ def test_retrieval_runs_end_to_end(tmp_path, caplog, noise_fraction, correlated)
     config = load_retrieval_config(
         {
             "model_res_cminv": MODEL_RES_CMINV,
-            "observation": {"upper_bound_m": 25e3},
+            "observation": {"upper_bound_m": 25e3, "row_averaging": row_averaging},
             "minimizer": {"max_nfev": 2},
             "preprocessor": {"wavenumber_cminv": "auto"},
         }
@@ -112,7 +117,9 @@ def test_retrieval_runs_end_to_end(tmp_path, caplog, noise_fraction, correlated)
     assert l2.sizes["time"] == 1
     assert np.all(l2["aerosol_extinction"] > 0)
     assert int(l2["num_function_evaluations"].isel(time=0)) <= 2
-    assert int(l2["num_los"].isel(time=0)) <= len(TANGENT_ALTITUDES_M)
+    assert int(l2["num_los"].isel(time=0)) <= np.ceil(
+        len(TANGENT_ALTITUDES_M) / row_averaging
+    )
     assert l2.attrs["h2o_retrieval_space"] == "linear"
     assert l2.attrs["aerosol_retrieval_space"] == "log"
     assert ("Treating L1B samples as independent" in caplog.text) is not correlated

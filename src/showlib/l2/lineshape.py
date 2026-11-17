@@ -36,6 +36,16 @@ def instrument_line_shape(
     return inverse_operator(cal_db, row, apodization) @ forward
 
 
+def _row_group(row) -> tuple[int, ...]:
+    """A detector row, or a group of rows averaged into one line of sight, as a
+    tuple of rows."""
+    rows = tuple(int(r) for r in np.atleast_1d(row))
+    if not rows:
+        msg = "A row group needs at least one detector row"
+        raise ValueError(msg)
+    return rows
+
+
 def apodization_from_attrs(attrs: dict) -> float | None:
     """Kaiser beta from L1B processing attributes; None for a rectangular window."""
     window = attrs.get("apodization_window")
@@ -66,8 +76,9 @@ class SHOWLineShapes:
         self._apodization = apodization
 
         self._model_wavenumber = cal_db.model_wavenumber(model_res_cminv)
-        self._matrices: dict[int, np.ndarray] = {}
-        self._correlations: dict[int, np.ndarray] = {}
+        self._matrices: dict[tuple[int, ...], np.ndarray] = {}
+        self._covariances: dict[int, np.ndarray] = {}
+        self._correlations: dict[tuple[int, ...], np.ndarray] = {}
 
     @classmethod
     def from_l1b(
@@ -106,16 +117,29 @@ class SHOWLineShapes:
         """Model wavenumbers [cm-1], increasing."""
         return self._model_wavenumber
 
-    def matrix(self, row: int) -> np.ndarray:
-        """Line-shape matrix of one row: shape (num_samples, num_model)."""
-        if row not in self._matrices:
-            self._matrices[row] = instrument_line_shape(
-                self._cal_db, row, self._model_wavenumber, self._apodization
-            )
-        return self._matrices[row]
+    def matrix(self, row) -> np.ndarray:
+        """Line-shape matrix of one row, shape (num_samples, num_model).
+
+        ``row`` may also be a group of rows averaged into one line of sight (see
+        showlib.l1b.data.average_rows); its line shape is the mean of theirs.
+        """
+        rows = _row_group(row)
+        if rows not in self._matrices:
+            if len(rows) == 1:
+                self._matrices[rows] = instrument_line_shape(
+                    self._cal_db, rows[0], self._model_wavenumber, self._apodization
+                )
+            else:
+                self._check_same_samples(rows)
+                self._matrices[rows] = np.mean(
+                    [self.matrix(member) for member in rows], axis=0
+                )
+        return self._matrices[rows]
 
     def instrument_model(self, rows, sample_wavenumber) -> SHOWInstrumentModel:
         """Instrument model for lines of sight on ``rows``, at the given samples.
+
+        Each entry of ``rows`` is a detector row or a group of averaged rows.
 
         The samples are matched to each row's calibration sample wavenumbers and
         returned in increasing order. Every row must have all of them: per-row
@@ -124,30 +148,54 @@ class SHOWLineShapes:
         """
         requested = np.sort(np.asarray(sample_wavenumber, dtype=float))
         matrices = [
-            self.matrix(row)[self._sample_indices(row, requested)] for row in rows
+            self.matrix(row)[self._sample_indices(_row_group(row)[0], requested)]
+            for row in rows
         ]
         return SHOWInstrumentModel(
             np.stack(matrices), requested, self._model_wavenumber
         )
 
-    def noise_correlation(self, row: int, sample_wavenumber=None) -> np.ndarray:
+    def noise_correlation(self, row, sample_wavenumber=None) -> np.ndarray:
         """Correlation of L1B radiance noise between the samples of one row.
 
         L1A→L1B maps pixel noise to radiance through B, so the covariance is
         B·diag(pixel variance)·Bᵀ. Pixel variances are taken as equal across the
-        row, which makes the correlation depend only on B. ``sample_wavenumber``
-        selects samples (in the given order); the default is all of them.
+        row, which makes the correlation depend only on B. For a group of rows
+        averaged into one line of sight, the rows' noise is independent and the
+        covariance of their mean is proportional to the sum of theirs.
+        ``sample_wavenumber`` selects samples (in the given order); the default
+        is all of them.
         """
-        if row not in self._correlations:
-            operator = inverse_operator(self._cal_db, row, self._apodization)
-            covariance = operator @ operator.T
+        rows = _row_group(row)
+        if rows not in self._correlations:
+            if len(rows) > 1:
+                self._check_same_samples(rows)
+            covariance = sum(self._covariance(member) for member in rows)
             sigma = np.sqrt(np.diag(covariance))
-            self._correlations[row] = covariance / np.outer(sigma, sigma)
-        correlation = self._correlations[row]
+            self._correlations[rows] = covariance / np.outer(sigma, sigma)
+        correlation = self._correlations[rows]
         if sample_wavenumber is None:
             return correlation
-        index = self._sample_indices(row, sample_wavenumber)
+        index = self._sample_indices(rows[0], sample_wavenumber)
         return correlation[np.ix_(index, index)]
+
+    def _covariance(self, row: int) -> np.ndarray:
+        """B·Bᵀ for one row: its noise covariance for unit pixel variance."""
+        if row not in self._covariances:
+            operator = inverse_operator(self._cal_db, row, self._apodization)
+            self._covariances[row] = operator @ operator.T
+        return self._covariances[row]
+
+    def _check_same_samples(self, rows: tuple[int, ...]) -> None:
+        samples = self._cal_db.sample_wavenumber(rows[0])
+        if any(
+            not np.array_equal(self._cal_db.sample_wavenumber(row), samples)
+            for row in rows[1:]
+        ):
+            msg = (
+                f"Rows {rows} have different sample wavenumbers and cannot be averaged"
+            )
+            raise ValueError(msg)
 
     def _sample_indices(self, row: int, sample_wavenumber) -> np.ndarray:
         """Index of each requested wavenumber among the row's calibration samples."""

@@ -78,7 +78,7 @@ class SHOWInstrumentModel:
 
 
 class SHOWForwardModel(IdealViewingSpectrograph):
-    def __init__(self, *args, line_shapes: SHOWLineShapes, rows: np.ndarray, **kwargs):
+    def __init__(self, *args, line_shapes: SHOWLineShapes, rows, **kwargs):
         """
         SHOW forward model using B·A line shapes for each line of sight
 
@@ -86,11 +86,12 @@ class SHOWForwardModel(IdealViewingSpectrograph):
         ----------
         line_shapes : SHOWLineShapes
             Model grid and line shapes from the calibration database
-        rows : np.ndarray
-            Detector row of each retrieved line of sight
+        rows : sequence
+            Detector row of each retrieved line of sight, or the tuple of rows
+            averaged into it
         """
         self._line_shapes = line_shapes
-        self._rows = np.asarray(rows)
+        self._rows = list(rows)
         super().__init__(*args, **kwargs)
 
     def _construct_model_wavelength(self):

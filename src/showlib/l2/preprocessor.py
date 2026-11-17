@@ -83,6 +83,7 @@ def l2_preprocessor(
             low_alt=0,
             high_alt=upper_bound,
             row_reduction=observation["row_reduction"],
+            row_averaging=observation["row_averaging"],
             low_wvnumber_filter=observation["low_wavenumber_filter_cminv"],
             high_wvnumber_filter=observation["high_wavenumber_filter_cminv"],
             override_los=observation["override_los"],

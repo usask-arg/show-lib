@@ -272,7 +272,9 @@ variables:
     required: true
     valid_min: 1
     role: quality
-    description: Number of lines of sight used, after altitude limits and saturation.
+    description: >
+      Number of lines of sight used, after row reduction, altitude limits, and
+      saturation. With row averaging, each averaged group of rows counts once.
 
   cost:
     dims: [time]

@@ -14,6 +14,7 @@ from skretrieval.retrieval.observation import Observation
 from skretrieval.util import rotation_matrix
 
 from showlib.schemas import apply_metadata, check
+from showlib.util import wrap_degrees
 
 
 class L1bImage(Observation):
@@ -89,7 +90,18 @@ class L1bImage(Observation):
         low_wvnumber_filter=0,
         high_wvnumber_filter=1e10,
         override_los=False,
+        row_groups: list[tuple[int, ...]] | None = None,
     ):
+        """``row_groups`` gives, for each line of sight of ``ds``, the detector rows
+        averaged into it (see average_rows); by default each line of sight is its
+        own ``los`` row."""
+        if row_groups is not None and len(row_groups) != ds.sizes["los"]:
+            msg = (
+                f"Expected {ds.sizes['los']} row groups, one per line of sight, "
+                f"got {len(row_groups)}"
+            )
+            raise ValueError(msg)
+        self._row_groups = row_groups
         self._ds = ds
         self._low_alt = low_alt
         self._high_alt = high_alt
@@ -111,9 +123,15 @@ class L1bImage(Observation):
             raise ValueError(msg)
         return mask
 
-    def retrieval_rows(self) -> np.ndarray:
-        """Detector row of each line of sight used in the retrieval."""
-        return self._ds["los"].to_numpy()[self._retrieval_los_mask()]
+    def retrieval_rows(self) -> list:
+        """Detector row of each line of sight used in the retrieval, or for
+        averaged rows, the tuple of detector rows averaged into it."""
+        mask = self._retrieval_los_mask()
+        if self._row_groups is None:
+            return list(self._ds["los"].to_numpy()[mask])
+        return [
+            group for group, keep in zip(self._row_groups, mask, strict=True) if keep
+        ]
 
     def sk2_geometry(self) -> dict[sk.ViewingGeometry]:
         viewing_geo = sk.ViewingGeometry()
@@ -309,13 +327,26 @@ class L1bDataSet:
         self._ds.to_netcdf(out_file)
 
     def image(
-        self, index: int, row_reduction: int = 1, low_alt=0, high_alt=100000, **kwargs
+        self,
+        index: int,
+        row_reduction: int = 1,
+        low_alt=0,
+        high_alt=100000,
+        row_averaging: int = 1,
+        **kwargs,
     ):
+        """One image as a retrieval observation.
+
+        ``row_reduction`` keeps every n-th row; ``row_averaging`` then averages
+        consecutive groups of that many of the kept rows into one line of sight
+        (see average_rows). Altitude limits apply to the resulting lines of sight.
+        """
+        ds = self._ds.isel(time=index).isel(los=slice(None, None, row_reduction))
+        row_groups = None
+        if row_averaging != 1:
+            ds, row_groups = average_rows(ds, row_averaging)
         return L1bImage(
-            self._ds.isel(time=index).isel(los=slice(None, None, row_reduction)),
-            low_alt=low_alt,
-            high_alt=high_alt,
-            **kwargs,
+            ds, low_alt=low_alt, high_alt=high_alt, row_groups=row_groups, **kwargs
         )
 
     @property
@@ -329,3 +360,90 @@ class L1bDataSet:
         return self._parent.joinpath("l2").joinpath(
             self._name.replace("L1B", "L2").replace("Radiances", "Wvapor") + ".nc"
         )
+
+
+# Per-line-of-sight angles averaged on the circle, since they wrap (the relative
+# solar azimuth is near ±180 for backscatter)
+_CIRCULAR_GEOMETRY = (
+    "tangent_longitude",
+    "relative_solar_azimuth_angle",
+    "los_azimuth_angle",
+)
+_LINEAR_GEOMETRY = ("tangent_altitude", "tangent_latitude", "solar_zenith_angle")
+
+
+def average_rows(
+    image: xr.Dataset, num_rows: int
+) -> tuple[xr.Dataset, list[tuple[int, ...]]]:
+    """Average consecutive groups of ``num_rows`` lines of sight of one L1B image.
+
+    Each group becomes one line of sight: the mean radiance, its noise
+    sqrt(sum(radiance_noise**2)) / count (rows are independent), and the mean
+    geometry, with the azimuths and longitude averaged on the circle. A group is
+    saturated if any of its rows is (saturated_fraction is the largest). The last
+    group may have fewer rows. Every row in a group must have the same wavenumber
+    grid. ``los`` becomes the first detector row of each group, and the groups'
+    detector rows are returned alongside, for the line shapes.
+
+    The retrieval models a group as one line of sight at its mean geometry with
+    the mean of its rows' line shapes, which is accurate while the radiance is
+    close to linear in tangent altitude across the group.
+    """
+    if isinstance(num_rows, bool) or not isinstance(num_rows, int | np.integer):
+        msg = f"row_averaging must be a positive integer, got {num_rows!r}"
+        raise TypeError(msg)
+    if num_rows < 1:
+        msg = f"row_averaging must be a positive integer, got {num_rows}"
+        raise ValueError(msg)
+
+    rows = image["los"].to_numpy()
+    starts = np.arange(0, len(rows), num_rows)
+    groups = [
+        tuple(int(row) for row in rows[start : start + num_rows]) for start in starts
+    ]
+    group = xr.DataArray(np.arange(len(rows)) // num_rows, dims="los")
+
+    wavenumber = image["wavenumber"]
+    first = wavenumber.isel(los=starts)
+    if not np.array_equal(wavenumber.to_numpy(), first.to_numpy()[group.to_numpy()]):
+        msg = "Averaged rows must share one wavenumber grid"
+        raise ValueError(msg)
+
+    def mean(name):
+        return image[name].groupby(group).mean().rename(group="los")
+
+    def circular_mean(name):
+        angle = np.deg2rad(image[name])
+        sin = np.sin(angle).groupby(group).mean()
+        cos = np.cos(angle).groupby(group).mean()
+        return np.rad2deg(np.arctan2(sin, cos)).rename(group="los")
+
+    averaged = image.drop_dims("los").assign(
+        radiance=mean("radiance"),
+        radiance_noise=np.sqrt(
+            (image["radiance_noise"] ** 2).groupby(group).sum()
+        ).rename(group="los")
+        / xr.DataArray([len(g) for g in groups], dims="los"),
+        **{name: mean(name) for name in _LINEAR_GEOMETRY},
+        **{name: circular_mean(name) for name in _CIRCULAR_GEOMETRY},
+    )
+    if "saturated_fraction" in image:
+        averaged["saturated_fraction"] = (
+            image["saturated_fraction"].groupby(group).max().rename(group="los")
+        )
+    averaged = averaged.assign_coords(
+        los=("los", rows[starts]), wavenumber=first.variable
+    )
+    for name, lower in (
+        ("relative_solar_azimuth_angle", -180.0),
+        ("los_azimuth_angle", 0.0),
+    ):
+        averaged[name] = averaged[name].copy(data=wrap_degrees(averaged[name], lower))
+    for name in averaged.variables:
+        if name in image.variables:
+            averaged[name].attrs = image[name].attrs
+    averaged.attrs = image.attrs
+    return (
+        averaged.transpose(*[dim for dim in image.dims if dim in averaged.dims]),
+        groups,
+    )
