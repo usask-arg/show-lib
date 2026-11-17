@@ -56,6 +56,65 @@ def weakest_h2o_sample(
     return float(samples[np.argmin(cross_section[0])])
 
 
+def lowest_usable_altitude(
+    tangent_altitude: np.ndarray,
+    ratio: np.ndarray,
+    ratio_noise: np.ndarray,
+    *,
+    smoothing_los: int,
+    ratio_threshold: float,
+    noise_sigma: float,
+    min_good_rows: int,
+    fallback_m: float,
+) -> float:
+    """The altitude [m] above which the pre-fit's rows are usable.
+
+    ``ratio`` is measured/modelled radiance per line of sight and ``ratio_noise``
+    its 1-sigma noise. Both are averaged over a centred window of
+    ``smoothing_los`` rows in altitude order (fewer at the ends), with the rows'
+    noise taken as independent. A row is bad when its smoothed ratio differs from
+    1 by more than ``ratio_threshold`` plus ``noise_sigma`` times its smoothed
+    noise, or is missing (missing rows are left out of their neighbours' means).
+
+    Searching up from the lowest row, the result is the altitude of the highest
+    bad row below the first ``min_good_rows`` consecutive good rows, so rows
+    strictly above it are used. ``fallback_m`` is returned when no bad row is
+    below that run, or when there is no such run.
+    """
+    order = np.argsort(tangent_altitude)
+    altitude = np.asarray(tangent_altitude, dtype=float)[order]
+    ratio = np.asarray(ratio, dtype=float)[order]
+    noise = np.asarray(ratio_noise, dtype=float)[order]
+
+    present = np.isfinite(ratio) & np.isfinite(noise)
+    start = smoothing_los - 1 - smoothing_los // 2
+
+    def centred_sum(values):
+        values = np.where(present, values, 0.0)
+        summed = np.convolve(values, np.ones(smoothing_los), mode="full")
+        return summed[start : start + len(values)]
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        count = centred_sum(np.ones_like(ratio))
+        smoothed = centred_sum(ratio) / count
+        smoothed_noise = np.sqrt(centred_sum(noise**2)) / count
+
+    good = present & (
+        np.abs(1 - smoothed) <= ratio_threshold + noise_sigma * smoothed_noise
+    )
+
+    for first in range(len(good) - min_good_rows + 1):
+        if good[first : first + min_good_rows].all():
+            return fallback_m if first == 0 else float(altitude[first - 1])
+
+    logging.warning(
+        "No run of %d usable rows in the pre-fit, using the fallback %.0f m",
+        min_good_rows,
+        fallback_m,
+    )
+    return fallback_m
+
+
 def l2_preprocessor(
     l1b_data: L1bDataSet,
     por_data: xr.Dataset,
@@ -139,24 +198,15 @@ def l2_preprocessor(
 
         l1 = results["meas_l1"]["meas"]
 
-        meas_ratio = (
-            l1.data.sel(wavenumber=wvnum, method="nearest")
-            / results["simulated_l1"]["meas"].data
-        )["radiance"]
-
-        # Smooth the ratio
-        meas_ratio = meas_ratio.rolling(
-            los=low_altitude["smoothing_los"], center=True
-        ).mean()
-
-        # Find altitudes where abs(1 - ratio) > 0.1
-        bad = np.abs(1 - meas_ratio) > low_altitude["ratio_threshold"]
-        bad_alt = l1.data.tangent_altitude.isel(los=bad.to_numpy().flatten())
-
-        try:
-            estimated_low_alt = bad_alt.max()
-        except Exception:
-            estimated_low_alt = low_altitude["fallback_m"]
+        measured = l1.data.sel(wavenumber=wvnum, method="nearest")
+        modelled = results["simulated_l1"]["meas"].data["radiance"]
+        estimated_low_alt = lowest_usable_altitude(
+            l1.data.tangent_altitude.to_numpy(),
+            (measured["radiance"] / modelled).to_numpy().ravel(),
+            (measured["radiance_noise"] / modelled).to_numpy().ravel(),
+            **low_altitude,
+        )
+        logging.info("Lowest usable altitude: %.0f m", estimated_low_alt)
 
         if "aerosol_extinction" in por_data:
             aero_prof = (
@@ -174,6 +224,6 @@ def l2_preprocessor(
         #    results["state"].altitude.to_numpy() > float(l1.data.tangent_altitude.max())
         # ] = 0
 
-        l2s.append({"aerosol": aero_prof, "low_alt": float(estimated_low_alt)})
+        l2s.append({"aerosol": aero_prof, "low_alt": estimated_low_alt})
 
     return l2s
