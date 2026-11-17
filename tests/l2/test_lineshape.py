@@ -155,6 +155,18 @@ def test_instrument_model_selects_requested_samples_per_row(make_cal_db):
     np.testing.assert_allclose(model.model_wavenumber, line_shapes.model_wavenumber)
 
 
+def test_instrument_model_shares_cached_matrices_for_all_samples(make_cal_db):
+    """The matrices are large, so all samples (the usual case) are not copied."""
+    cal_db = CalibrationDatabase(make_cal_db())
+    line_shapes = SHOWLineShapes(cal_db, apodization=None, model_res_cminv=0.05)
+    samples = cal_db.sample_wavenumber(0)
+
+    model = line_shapes.instrument_model(rows=[1, 0], sample_wavenumber=samples)
+
+    assert model.matrices[0] is line_shapes.matrix(1)
+    assert model.matrices[1] is line_shapes.matrix(0)
+
+
 def test_instrument_model_rejects_unknown_samples(make_cal_db):
     line_shapes = SHOWLineShapes(
         CalibrationDatabase(make_cal_db()), apodization=None, model_res_cminv=0.05

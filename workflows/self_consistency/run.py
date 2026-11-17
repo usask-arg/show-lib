@@ -135,7 +135,11 @@ def simulate_radiance(model_wavenumber: np.ndarray, num_threads: int) -> np.ndar
         )
 
     config = engine_config(num_threads)
-    atmo = sk.Atmosphere(geometry, config, wavelengths_nm=wavelength_nm)
+    # The truth needs no weighting functions, which at every model wavenumber and
+    # row would be most of the workflow's memory
+    atmo = sk.Atmosphere(
+        geometry, config, wavelengths_nm=wavelength_nm, calculate_derivatives=False
+    )
     Ancillary(ALTITUDE_GRID_M, pressure, temperature).add_to_atmosphere(atmo)
     atmo["h2o"] = sk.constituent.VMRAltitudeAbsorber(
         h2o_optical_property(), ALTITUDE_GRID_M, truth_h2o_vmr(ALTITUDE_GRID_M)

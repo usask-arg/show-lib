@@ -13,14 +13,122 @@ import copy
 import numpy as np
 import sasktran2 as sk
 import skretrieval.retrieval.prior as prior
+import xarray as xr
 from skretrieval.retrieval.processing import Retrieval
+from skretrieval.retrieval.statevector.altitude import AltitudeNativeStateVector
 from skretrieval.retrieval.statevector.constituent import StateVectorElementConstituent
+from skretrieval.retrieval.statevector.shifts import WavenumberShift
 
 from showlib.l2.optical import h2o_optical_property
+
+# Weighting functions of elements with one value per line of sight, which affects
+# only that line of sight. They are kept as (element, wavelength, los, stokes) and
+# expanded on the sample grid by SHOWInstrumentModel; see SHOWStateVector.
+PER_LOS_WF = "wf_per_los"
+
+
+class SHOWStateVector(AltitudeNativeStateVector):
+    """AltitudeNativeStateVector that maps SASKTRAN2 radiances with less memory.
+
+    The weighting functions on the model grid (state size by model wavenumbers by
+    lines of sight) are the retrieval's largest arrays. skretrieval holds every
+    element's weighting functions and their concatenation at once, and modifies
+    SASKTRAN2's own weighting functions before dropping them. This writes each
+    element's weighting functions into one array as they are computed, and drops
+    SASKTRAN2's before the radiance is modified.
+
+    A WavenumberShift has one value per line of sight, and each changes only its
+    own line of sight, so its weighting functions are zero except on a diagonal.
+    Dense, they grow as the square of the number of lines of sight. They are kept
+    as one derivative per line of sight in ``wf_per_los`` instead, and ``wf``
+    holds the other elements' columns, with coordinate ``x`` giving each column's
+    index in the state vector. ``x_per_los`` is the index of each per-line-of-sight
+    element's first value. Only SHOWInstrumentModel expands this, into the same
+    weighting functions skretrieval gives.
+    """
+
+    def post_process_sk2_radiances(self, radiance: xr.Dataset) -> xr.Dataset:
+        elements = [element for element in self.state_elements if element.enabled]
+        dims = radiance["radiance"].dims
+        shape = radiance["radiance"].shape
+        sizes = [len(element.state()) for element in elements]
+        starts = np.cumsum([0, *sizes], dtype=int)[:-1]
+        per_los = np.array([_is_per_los(element) for element in elements], dtype=bool)
+
+        num_los = radiance.sizes["los"]
+        for element, size, is_per_los in zip(elements, sizes, per_los, strict=True):
+            if is_per_los and size != num_los:
+                msg = (
+                    f"{type(element).__name__} has {size} values for {num_los} "
+                    "lines of sight"
+                )
+                raise ValueError(msg)
+
+        # State-vector index of each column of the dense weighting functions
+        dense_index = np.flatnonzero(np.repeat(~per_los, sizes))
+        wf = np.empty((len(dense_index), *shape))
+        per_los_wf = np.zeros((np.count_nonzero(per_los), *shape))
+        column = per_los_slot = 0
+        for element, size, is_per_los in zip(elements, sizes, per_los, strict=True):
+            if is_per_los:
+                per_los_wf[per_los_slot] = (
+                    _shift_derivative(element, radiance).transpose(*dims).to_numpy()
+                )
+                per_los_slot += 1
+                continue
+            element_wf = element.propagate_wf(radiance).transpose("x", *dims)
+            if element_wf.sizes["x"] != size:
+                msg = (
+                    f"{type(element).__name__} has {size} state values but "
+                    f"{element_wf.sizes['x']} weighting functions"
+                )
+                raise ValueError(msg)
+            wf[column : column + size] = element_wf.to_numpy()
+            column += size
+            del element_wf
+
+        radiance = radiance.drop_vars([key for key in radiance if key.startswith("wf")])
+        for element in elements:
+            radiance = element.modify_input_radiance(radiance)
+
+        radiance["wf"] = xr.DataArray(wf, dims=["x", *dims], coords={"x": dense_index})
+        if per_los.any():
+            radiance[PER_LOS_WF] = xr.DataArray(
+                per_los_wf,
+                dims=["x_per_los", *dims],
+                coords={"x_per_los": starts[per_los]},
+            )
+        return radiance
+
+
+def _is_per_los(element) -> bool:
+    # Exactly WavenumberShift: a subclass could change its weighting functions
+    return type(element) is WavenumberShift
+
+
+def _shift_derivative(shift: WavenumberShift, radiance: xr.Dataset) -> xr.DataArray:
+    """d(radiance)/d(shift) of each line of sight at its own shift, (wavelength,
+    los, stokes).
+
+    The same finite difference as WavenumberShift.propagate_wf, which returns it
+    as the diagonal of a (los, wavelength, los, stokes) array: stokes 0 only.
+    """
+    delta = shift._numerical_delta
+    rad = radiance["radiance"].isel(stokes=0)
+    shifted = rad.interp(
+        wavelength=radiance.wavelength + delta, kwargs={"fill_value": "extrapolate"}
+    )
+    derivative = xr.zeros_like(radiance["radiance"])
+    derivative[{"stokes": 0}] = (shifted - rad) / delta
+    return derivative
 
 
 class SHOWRetrieval(Retrieval):
     """skretrieval Retrieval with the SHOW optical properties and state types."""
+
+    def _construct_state_vector(self):
+        state_vector = super()._construct_state_vector()
+        return SHOWStateVector(state_vector.altitude_grid, **state_vector.sv)
 
     def retrieve(
         self,
