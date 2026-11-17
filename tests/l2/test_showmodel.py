@@ -75,14 +75,22 @@ def test_instrument_model_rejects_a_different_model_grid(instrument_model):
 
 
 # ------------------------------------------------------------ SHOWForwardModel
+def _bare_forward_model(line_shapes, samples, tolerance=None):
+    """A SHOWForwardModel with only what its model-grid hooks use."""
+    forward_model = object.__new__(SHOWForwardModel)
+    forward_model._line_shapes = line_shapes
+    forward_model._rows = np.array([1, 0])
+    forward_model._line_shape_tolerance = tolerance
+    forward_model._inst_models = None
+    forward_model._get_required_wavelength = lambda: {"meas": 1e7 / samples}
+    return forward_model
+
+
 def test_forward_model_hooks_use_the_line_shapes(make_cal_db):
     cal_db = CalibrationDatabase(make_cal_db())
     line_shapes = SHOWLineShapes(cal_db, apodization=None, model_res_cminv=0.05)
     samples = cal_db.sample_wavenumber(0)
-    forward_model = object.__new__(SHOWForwardModel)
-    forward_model._line_shapes = line_shapes
-    forward_model._rows = np.array([1, 0])
-    forward_model._get_required_wavelength = lambda: {"meas": 1e7 / samples[[2, 0]]}
+    forward_model = _bare_forward_model(line_shapes, samples[[2, 0]])
 
     wavelength = forward_model._construct_model_wavelength()["meas"]
     inst = forward_model._construct_inst_model()["meas"]
@@ -90,6 +98,21 @@ def test_forward_model_hooks_use_the_line_shapes(make_cal_db):
     np.testing.assert_allclose(wavelength, 1e7 / line_shapes.model_wavenumber[::-1])
     np.testing.assert_allclose(inst.sample_wavenumber, samples[[0, 2]])
     np.testing.assert_allclose(inst.matrices[0], line_shapes.matrix(1)[[0, 2]])
+
+
+def test_forward_model_grid_is_the_line_shape_window(make_cal_db):
+    cal_db = CalibrationDatabase(make_cal_db())
+    line_shapes = SHOWLineShapes(cal_db, apodization=10.0, model_res_cminv=0.05)
+    samples = cal_db.sample_wavenumber(0)
+    forward_model = _bare_forward_model(line_shapes, samples[[1]], tolerance=1e-3)
+
+    wavelength = forward_model._construct_model_wavelength()["meas"]
+    inst = forward_model._construct_inst_model()["meas"]
+
+    expected = line_shapes.instrument_model([1, 0], samples[[1]], tolerance=1e-3)
+    np.testing.assert_allclose(wavelength, 1e7 / inst.model_wavenumber[::-1])
+    np.testing.assert_allclose(inst.model_wavenumber, expected.model_wavenumber)
+    np.testing.assert_allclose(inst.matrices, expected.matrices)
 
 
 def test_measurement_flattening_matches_the_whitener(instrument_model):

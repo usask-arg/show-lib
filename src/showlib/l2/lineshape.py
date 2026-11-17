@@ -29,11 +29,36 @@ def instrument_line_shape(
     ``wavenumber``, so ``line_shape @ spectrum`` is what L1A→L1B returns for L1A
     generated from ``spectrum``. It is not renormalized.
     """
+    return inverse_operator(cal_db, row, apodization) @ _unit_forward_operator(
+        cal_db, row, wavenumber
+    )
+
+
+def _unit_forward_operator(
+    cal_db: CalibrationDatabase, row: int, wavenumber: np.ndarray
+) -> np.ndarray:
+    """A for one row and a 1 s exposure, on the bins of ``wavenumber``."""
     wavenumber = np.asarray(wavenumber, dtype=float)
-    forward = cal_db.forward_operator(
+    return cal_db.forward_operator(
         row, wavenumber, bin_width(wavenumber), exposure_time=1.0
     )
-    return inverse_operator(cal_db, row, apodization) @ forward
+
+
+def _window(line_shapes: np.ndarray, tolerance: float) -> slice:
+    """The model points that every line shape needs, to within ``tolerance``.
+
+    ``line_shapes`` has shape (..., num_model). Each line shape may drop at most
+    tolerance / 2 of its absolute weight from each end of the grid; the window is
+    the smallest contiguous range that satisfies all of them.
+    """
+    weight = np.abs(line_shapes).reshape(-1, line_shapes.shape[-1])
+    budget = 0.5 * tolerance * weight.sum(axis=1, keepdims=True)
+    # Points whose cumulative weight from an end is within the budget can go
+    below = np.cumsum(weight, axis=1) <= budget
+    above = np.cumsum(weight[:, ::-1], axis=1)[:, ::-1] <= budget
+    start = int(np.min(np.argmin(below, axis=1)))
+    stop = int(np.max(weight.shape[1] - np.argmin(above[:, ::-1], axis=1)))
+    return slice(start, stop)
 
 
 def _row_group(row) -> tuple[int, ...]:
@@ -62,8 +87,9 @@ class SHOWLineShapes:
 
     The grid spans the calibration database's spectral_transmission table at
     ``model_res_cminv``. A is zero wherever the transmission is zero, so nothing
-    is truncated, and out-of-band leakage is included. Matrices do not depend on
-    the image, so each row is computed once and cached.
+    is truncated, and out-of-band leakage is included. Matrices and the L1A→L1B
+    inverse B do not depend on the image, so each row's are computed once and
+    cached; share one instance between the preprocessor and the retrieval.
     """
 
     def __init__(
@@ -77,6 +103,7 @@ class SHOWLineShapes:
 
         self._model_wavenumber = cal_db.model_wavenumber(model_res_cminv)
         self._matrices: dict[tuple[int, ...], np.ndarray] = {}
+        self._inverses: dict[int, np.ndarray] = {}
         self._covariances: dict[int, np.ndarray] = {}
         self._correlations: dict[tuple[int, ...], np.ndarray] = {}
 
@@ -126,8 +153,8 @@ class SHOWLineShapes:
         rows = _row_group(row)
         if rows not in self._matrices:
             if len(rows) == 1:
-                self._matrices[rows] = instrument_line_shape(
-                    self._cal_db, rows[0], self._model_wavenumber, self._apodization
+                self._matrices[rows] = self._inverse(rows[0]) @ _unit_forward_operator(
+                    self._cal_db, rows[0], self._model_wavenumber
                 )
             else:
                 self._check_same_samples(rows)
@@ -136,7 +163,9 @@ class SHOWLineShapes:
                 )
         return self._matrices[rows]
 
-    def instrument_model(self, rows, sample_wavenumber) -> SHOWInstrumentModel:
+    def instrument_model(
+        self, rows, sample_wavenumber, tolerance: float | None = None
+    ) -> SHOWInstrumentModel:
         """Instrument model for lines of sight on ``rows``, at the given samples.
 
         Each entry of ``rows`` is a detector row or a group of averaged rows.
@@ -145,15 +174,31 @@ class SHOWLineShapes:
         returned in increasing order. Every row must have all of them: per-row
         sample grids, which the calibration schema allows, are not supported by
         the retrieval yet (L1bImage.skretrieval_l1 raises NotImplementedError).
+
+        By default the model grid is the full model_wavenumber. With a
+        ``tolerance``, it is cut to the smallest window that keeps all but
+        ``tolerance`` of each line shape's absolute weight (see _window), and each
+        line shape is rescaled to its full-grid area, so a flat continuum is still
+        modelled exactly. For a few samples, such as the preprocessor's one, the
+        window is a small part of the band and the radiative transfer is that much
+        cheaper.
         """
         requested = np.sort(np.asarray(sample_wavenumber, dtype=float))
-        matrices = [
-            self.matrix(row)[self._sample_indices(_row_group(row)[0], requested)]
-            for row in rows
-        ]
-        return SHOWInstrumentModel(
-            np.stack(matrices), requested, self._model_wavenumber
+        matrices = np.stack(
+            [
+                self.matrix(row)[self._sample_indices(_row_group(row)[0], requested)]
+                for row in rows
+            ]
         )
+        if tolerance is None:
+            return SHOWInstrumentModel(matrices, requested, self._model_wavenumber)
+
+        window = _window(matrices, tolerance)
+        windowed = matrices[..., window]
+        windowed = windowed * (
+            matrices.sum(axis=-1, keepdims=True) / windowed.sum(axis=-1, keepdims=True)
+        )
+        return SHOWInstrumentModel(windowed, requested, self._model_wavenumber[window])
 
     def noise_correlation(self, row, sample_wavenumber=None) -> np.ndarray:
         """Correlation of L1B radiance noise between the samples of one row.
@@ -179,10 +224,16 @@ class SHOWLineShapes:
         index = self._sample_indices(rows[0], sample_wavenumber)
         return correlation[np.ix_(index, index)]
 
+    def _inverse(self, row: int) -> np.ndarray:
+        """B for one row, shared by its line shape and its noise covariance."""
+        if row not in self._inverses:
+            self._inverses[row] = inverse_operator(self._cal_db, row, self._apodization)
+        return self._inverses[row]
+
     def _covariance(self, row: int) -> np.ndarray:
         """B·Bᵀ for one row: its noise covariance for unit pixel variance."""
         if row not in self._covariances:
-            operator = inverse_operator(self._cal_db, row, self._apodization)
+            operator = self._inverse(row)
             self._covariances[row] = operator @ operator.T
         return self._covariances[row]
 

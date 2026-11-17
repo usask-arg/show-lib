@@ -4,10 +4,13 @@ import numpy as np
 import pytest
 
 from showlib.cal_db import CalibrationDatabase, bin_width
+from showlib.cal_db.ideal import ideal_calibration_database
 from showlib.l1a.data import L1ADataSet, L1AImage
 from showlib.l1b.data import L1bDataSet
+from showlib.l2 import lineshape
 from showlib.l2.lineshape import (
     SHOWLineShapes,
+    _window,
     apodization_from_attrs,
     instrument_line_shape,
 )
@@ -264,3 +267,71 @@ def test_rows_with_different_samples_cannot_be_averaged(make_cal_db):
         line_shapes.matrix((0, 1))
     with pytest.raises(ValueError, match="different sample wavenumbers"):
         line_shapes.noise_correlation((0, 1))
+
+
+# ---------------------------------------------------------- windowed models
+def test_inverse_is_shared_by_line_shapes_and_noise(make_cal_db, monkeypatch):
+    calls = []
+    original = lineshape.inverse_operator
+
+    def counting(*args, **kwargs):
+        calls.append(args[1])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(lineshape, "inverse_operator", counting)
+    line_shapes = SHOWLineShapes(
+        _non_ideal_cal_db(make_cal_db), apodization=10.0, model_res_cminv=0.05
+    )
+    line_shapes.matrix(0)
+    line_shapes.noise_correlation(0)
+    line_shapes.matrix((0, 1))
+    line_shapes.noise_correlation((0, 1))
+
+    assert sorted(calls) == [0, 1]
+
+
+@pytest.mark.slow
+def test_a_windowed_model_keeps_one_samples_line_shape():
+    cal_db = ideal_calibration_database(2)
+    line_shapes = SHOWLineShapes(cal_db, apodization=10.0, model_res_cminv=0.01)
+    sample = cal_db.sample_wavenumber(0)[100]
+    grid = line_shapes.model_wavenumber
+    full = line_shapes.instrument_model([0, (0, 1)], [sample])
+
+    model = line_shapes.instrument_model([0, (0, 1)], [sample], tolerance=1e-3)
+
+    assert len(model.model_wavenumber) < len(grid) / 10
+    assert model.model_wavenumber[0] < sample < model.model_wavenumber[-1]
+    window = np.isin(grid, model.model_wavenumber)
+    np.testing.assert_array_equal(grid[window], model.model_wavenumber)
+    # Each line shape keeps its area, and nearly all of its weight is inside
+    np.testing.assert_allclose(
+        model.matrices.sum(axis=-1), full.matrices.sum(axis=-1), rtol=1e-12
+    )
+    outside = np.abs(full.matrices[..., ~window]).sum(axis=-1)
+    assert np.all(outside <= 1e-3 * np.abs(full.matrices).sum(axis=-1))
+    # A smooth spectrum is modelled as on the full grid
+    spectrum = 1e-3 * (1 + 0.2 * np.sin(grid / 3.0))
+    np.testing.assert_allclose(
+        model.matrices @ spectrum[window], full.matrices @ spectrum, rtol=1e-3
+    )
+
+
+def test_without_a_tolerance_the_model_grid_is_the_whole_grid(make_cal_db):
+    line_shapes = SHOWLineShapes(
+        _non_ideal_cal_db(make_cal_db), apodization=10.0, model_res_cminv=0.05
+    )
+    samples = line_shapes.cal_db.sample_wavenumber(0)
+    model = line_shapes.instrument_model([0], samples[[1]])
+    np.testing.assert_array_equal(model.model_wavenumber, line_shapes.model_wavenumber)
+
+
+def test_window_is_the_union_over_line_shapes():
+    line_shapes = np.zeros((2, 1, 10))
+    line_shapes[0, 0, 2:4] = 1.0
+    line_shapes[1, 0, 5:8] = [1.0, -1.0, 1.0]
+    assert _window(line_shapes, 1e-3) == slice(2, 8)
+    # Within the tolerance, a small tail is dropped
+    line_shapes[1, 0, 9] = 1e-4
+    assert _window(line_shapes, 1e-3) == slice(2, 8)
+    assert _window(line_shapes, 1e-5) == slice(2, 10)

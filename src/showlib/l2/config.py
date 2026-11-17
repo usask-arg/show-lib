@@ -13,6 +13,8 @@ import yaml
 
 # Sections whose contents are passed to skretrieval and may hold any key
 _FREE_FORM = "state"
+# Stages whose `engine` section may override any shared `engine` setting
+_STAGES = ("preprocessor", "retrieval")
 
 
 def load_retrieval_config(overrides: dict | str | os.PathLike | None = None) -> dict:
@@ -31,6 +33,14 @@ def load_retrieval_config(overrides: dict | str | os.PathLike | None = None) -> 
     if isinstance(overrides, str | os.PathLike):
         overrides = yaml.safe_load(Path(overrides).read_text("utf-8"))
     _merge(config, copy.deepcopy(overrides or {}), path="", free_form=False)
+    for stage in _STAGES:
+        for key in config[stage]["engine"]:
+            if key not in config["engine"]:
+                msg = (
+                    f"Unknown retrieval setting {stage}.engine.{key}; a stage's "
+                    "engine section can only override the shared engine settings"
+                )
+                raise ValueError(msg)
 
     wavenumber = config["preprocessor"]["wavenumber_cminv"]
     if wavenumber != "auto" and not isinstance(wavenumber, int | float):
@@ -77,7 +87,9 @@ def _merge(base: dict, overrides: dict, path: str, free_form: bool) -> None:
                 base[key],
                 value,
                 f"{location}.",
-                free_form=free_form or key == _FREE_FORM,
+                free_form=free_form
+                or key == _FREE_FORM
+                or (key == "engine" and path.rstrip(".") in _STAGES),
             )
         else:
             base[key] = value
