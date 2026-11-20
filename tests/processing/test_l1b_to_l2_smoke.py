@@ -14,9 +14,11 @@ import pytest
 import sasktran2 as sk
 import xarray as xr
 
+from showlib.cal_db import CalibrationDatabase
 from showlib.cal_db.ideal import ideal_calibration_database
 from showlib.l1a.data import L1ADataSet
 from showlib.l1a.simulate import simulate_l1a
+from showlib.l1b.data import L1bDataSet
 from showlib.l2.config import load_retrieval_config
 from showlib.l2.data import L2DataSet
 from showlib.l2.lineshape import SHOWLineShapes
@@ -72,14 +74,9 @@ def _program_of_record(altitude_m: np.ndarray) -> xr.Dataset:
     )
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize(
-    ("noise_fraction", "correlated", "row_averaging"),
-    [(0.0, True, 1), (0.01, False, 1), (0.0, True, 2)],
-)
-def test_retrieval_runs_end_to_end(
-    tmp_path, caplog, noise_fraction, correlated, row_averaging
-):
+def _granule(tmp_path, noise_fraction=0.0, row_averaging=1):
+    """An L1B granule and program of record under tmp_path; returns the L1B
+    path, the calibration database's path and the config."""
     cal_db = ideal_calibration_database(len(TANGENT_ALTITUDES_M), num_columns=256)
     cal_db_path = tmp_path / "cal_db.nc"
     cal_db.ds.to_netcdf(cal_db_path)
@@ -108,6 +105,18 @@ def test_retrieval_runs_end_to_end(
             )
         ).astype(float)
     ).to_netcdf(tmp_path / "por" / f"HAWC_H2OL_Wvapor_L2_POR_{NAME}.nc")
+    return l1b_path, cal_db_path, config
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("noise_fraction", "correlated", "row_averaging"),
+    [(0.0, True, 1), (0.01, False, 1), (0.0, True, 2)],
+)
+def test_retrieval_runs_end_to_end(
+    tmp_path, caplog, noise_fraction, correlated, row_averaging
+):
+    l1b_path, cal_db_path, config = _granule(tmp_path, noise_fraction, row_averaging)
 
     with caplog.at_level(logging.WARNING):
         process_l1b_to_l2_file(l1b_path, tmp_path / "l2", cal_db_path, config)
@@ -123,3 +132,23 @@ def test_retrieval_runs_end_to_end(
     assert l2.attrs["h2o_retrieval_space"] == "linear"
     assert l2.attrs["aerosol_retrieval_space"] == "log"
     assert ("Treating L1B samples as independent" in caplog.text) is not correlated
+
+
+@pytest.mark.slow
+def test_saved_line_shapes_give_the_same_retrieval(tmp_path):
+    l1b_path, cal_db_path, config = _granule(tmp_path, row_averaging=2)
+    l2_path = tmp_path / "l2" / f"HAWC_H2OL_Wvapor_L2_{NAME}.nc"
+    process_l1b_to_l2_file(l1b_path, tmp_path / "l2", cal_db_path, config)
+    built = L2DataSet.from_file(l2_path).ds.load()
+    l2_path.unlink()
+
+    cal_db = CalibrationDatabase.from_file(cal_db_path)
+    SHOWLineShapes.from_l1b(
+        cal_db, L1bDataSet.from_file(l1b_path), MODEL_RES_CMINV
+    ).save(tmp_path / "line_shapes")
+    line_shapes = SHOWLineShapes.load(tmp_path / "line_shapes", cal_db)
+    process_l1b_to_l2_file(
+        l1b_path, tmp_path / "l2", cal_db_path, config, line_shapes=line_shapes
+    )
+
+    xr.testing.assert_identical(L2DataSet.from_file(l2_path).ds, built)

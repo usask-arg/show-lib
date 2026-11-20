@@ -6,8 +6,13 @@ so the line shape always matches how the L1B was produced.
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import numpy as np
 
+from showlib._version import version as _showlib_version
 from showlib.cal_db import CalibrationDatabase, bin_width
 from showlib.l1b.data import L1bDataSet
 from showlib.l2.showmodel import SHOWInstrumentModel
@@ -15,6 +20,9 @@ from showlib.processing.l1a_to_l1b import inverse_operator
 
 # Requested samples come from the L1B grid, so they match to rounding error
 _SAMPLE_MATCH_ATOL_CMINV = 1e-6
+# Bump when the saved layout, or how the line shapes are computed, changes
+_FILE_FORMAT_VERSION = 1
+_METADATA_FILE = "metadata.json"
 
 
 def instrument_line_shape(
@@ -71,6 +79,28 @@ def _row_group(row) -> tuple[int, ...]:
     return rows
 
 
+def _check_l1b_rows(cal_db: CalibrationDatabase, l1b: L1bDataSet) -> None:
+    """Raise unless the L1B's rows and sample grid are the calibration's."""
+    rows = l1b.ds["los"].to_numpy()
+    if rows.min() < 0 or rows.max() >= cal_db.num_rows:
+        msg = (
+            f"The L1B's detector rows ({rows.min()} to {rows.max()}) are not all "
+            f"in the calibration database, which has {cal_db.num_rows} rows"
+        )
+        raise ValueError(msg)
+    l1b_wavenumber = l1b.ds["wavenumber"].to_numpy()
+    cal_wavenumber = cal_db.ds["sample_wavenumber"].isel(los=rows).to_numpy()
+    if l1b_wavenumber.shape != cal_wavenumber.shape or not np.allclose(
+        l1b_wavenumber, cal_wavenumber, rtol=0, atol=_SAMPLE_MATCH_ATOL_CMINV
+    ):
+        msg = (
+            "The L1B wavenumber grid does not match the calibration database's "
+            "sample_wavenumber; was the L1B made with a different calibration "
+            "database?"
+        )
+        raise ValueError(msg)
+
+
 def apodization_from_attrs(attrs: dict) -> float | None:
     """Kaiser beta from L1B processing attributes; None for a rectangular window."""
     window = attrs.get("apodization_window")
@@ -90,6 +120,10 @@ class SHOWLineShapes:
     is truncated, and out-of-band leakage is included. Matrices and the L1A→L1B
     inverse B do not depend on the image, so each row's are computed once and
     cached; share one instance between the preprocessor and the retrieval.
+
+    They depend only on the calibration database, the apodization and the model
+    grid, so for many granules build them once, ``save`` them, and ``load`` them
+    in each process (see check_l1b).
     """
 
     def __init__(
@@ -100,6 +134,7 @@ class SHOWLineShapes:
     ):
         self._cal_db = cal_db
         self._apodization = apodization
+        self._model_res_cminv = model_res_cminv
 
         self._model_wavenumber = cal_db.model_wavenumber(model_res_cminv)
         self._matrices: dict[tuple[int, ...], np.ndarray] = {}
@@ -115,24 +150,7 @@ class SHOWLineShapes:
         model_res_cminv: float = 0.01,
     ) -> SHOWLineShapes:
         """Line shapes for a granule, using the apodization recorded in its L1B."""
-        rows = l1b.ds["los"].to_numpy()
-        if rows.min() < 0 or rows.max() >= cal_db.num_rows:
-            msg = (
-                f"The L1B's detector rows ({rows.min()} to {rows.max()}) are not all "
-                f"in the calibration database, which has {cal_db.num_rows} rows"
-            )
-            raise ValueError(msg)
-        l1b_wavenumber = l1b.ds["wavenumber"].to_numpy()
-        cal_wavenumber = cal_db.ds["sample_wavenumber"].isel(los=rows).to_numpy()
-        if l1b_wavenumber.shape != cal_wavenumber.shape or not np.allclose(
-            l1b_wavenumber, cal_wavenumber, rtol=0, atol=_SAMPLE_MATCH_ATOL_CMINV
-        ):
-            msg = (
-                "The L1B wavenumber grid does not match the calibration database's "
-                "sample_wavenumber; was the L1B made with a different calibration "
-                "database?"
-            )
-            raise ValueError(msg)
+        _check_l1b_rows(cal_db, l1b)
         return cls(cal_db, apodization_from_attrs(l1b.ds.attrs), model_res_cminv)
 
     @property
@@ -140,9 +158,136 @@ class SHOWLineShapes:
         return self._cal_db
 
     @property
+    def apodization(self) -> float | None:
+        return self._apodization
+
+    @property
+    def model_res_cminv(self) -> float:
+        return self._model_res_cminv
+
+    @property
     def model_wavenumber(self) -> np.ndarray:
         """Model wavenumbers [cm-1], increasing."""
         return self._model_wavenumber
+
+    def check_l1b(
+        self, cal_db: CalibrationDatabase, l1b: L1bDataSet, model_res_cminv: float
+    ) -> None:
+        """Raise unless these line shapes are the ones from_l1b would build.
+
+        For line shapes made elsewhere (for example loaded): ``cal_db`` must have
+        the same contents as theirs, and the L1B's rows, samples and apodization
+        and ``model_res_cminv`` must match.
+        """
+        if cal_db is not self._cal_db and cal_db.fingerprint() != (
+            self._cal_db.fingerprint()
+        ):
+            msg = "The line shapes were made from a different calibration database"
+            raise ValueError(msg)
+        _check_l1b_rows(cal_db, l1b)
+        apodization = apodization_from_attrs(l1b.ds.attrs)
+        if apodization != self._apodization:
+            msg = (
+                f"The L1B's apodization ({apodization}) is not the line shapes' "
+                f"({self._apodization})"
+            )
+            raise ValueError(msg)
+        if model_res_cminv != self._model_res_cminv:
+            msg = (
+                f"model_res_cminv {model_res_cminv} is not the line shapes' "
+                f"{self._model_res_cminv}"
+            )
+            raise ValueError(msg)
+
+    def save(self, path: str | os.PathLike) -> None:
+        """Save every row's line shape and noise covariance to a new directory.
+
+        Rows not already cached are computed and written one at a time, not
+        cached. The directory is written under a temporary name and renamed when
+        complete, so an interrupted save leaves no loadable result.
+        """
+        path = Path(path)
+        if path.exists():
+            msg = f"{path} already exists"
+            raise FileExistsError(msg)
+        partial = path.with_name(path.name + ".partial")
+        partial.mkdir()
+
+        num_rows = self._cal_db.num_rows
+        num_samples = len(self._cal_db.sample_wavenumber(0))
+        np.save(partial / "model_wavenumber.npy", self._model_wavenumber)
+        matrices = np.lib.format.open_memmap(
+            partial / "matrices.npy",
+            mode="w+",
+            shape=(num_rows, num_samples, len(self._model_wavenumber)),
+        )
+        covariances = np.lib.format.open_memmap(
+            partial / "covariances.npy",
+            mode="w+",
+            shape=(num_rows, num_samples, num_samples),
+        )
+        for row in range(num_rows):
+            if (row,) in self._matrices and row in self._covariances:
+                matrices[row] = self._matrices[(row,)]
+                covariances[row] = self._covariances[row]
+                continue
+            operator = self._inverses.get(row)
+            if operator is None:
+                operator = inverse_operator(self._cal_db, row, self._apodization)
+            matrices[row] = operator @ _unit_forward_operator(
+                self._cal_db, row, self._model_wavenumber
+            )
+            covariances[row] = operator @ operator.T
+        matrices.flush()
+        covariances.flush()
+        del matrices, covariances
+
+        metadata = {
+            "format_version": _FILE_FORMAT_VERSION,
+            "cal_db_sha256": self._cal_db.fingerprint(),
+            "apodization": self._apodization,
+            "model_res_cminv": self._model_res_cminv,
+            "showlib_version": _showlib_version,
+        }
+        (partial / _METADATA_FILE).write_text(json.dumps(metadata, indent=2))
+        partial.rename(path)
+
+    @classmethod
+    def load(
+        cls, path: str | os.PathLike, cal_db: CalibrationDatabase
+    ) -> SHOWLineShapes:
+        """Line shapes saved by ``save`` for ``cal_db``, memory-mapped read-only.
+
+        Processes that load the same directory share its pages, so the matrices
+        are held in memory once however many workers there are. Raises if the
+        file is from another format version or calibration database, or its
+        model grid is not the one ``cal_db`` gives today.
+        """
+        path = Path(path)
+        metadata = json.loads((path / _METADATA_FILE).read_text())
+        if metadata["format_version"] != _FILE_FORMAT_VERSION:
+            msg = (
+                f"{path} has line-shape format version {metadata['format_version']}, "
+                f"not {_FILE_FORMAT_VERSION}; save it again"
+            )
+            raise ValueError(msg)
+        if metadata["cal_db_sha256"] != cal_db.fingerprint():
+            msg = f"{path} was made from a different calibration database"
+            raise ValueError(msg)
+
+        line_shapes = cls(cal_db, metadata["apodization"], metadata["model_res_cminv"])
+        if not np.array_equal(
+            np.load(path / "model_wavenumber.npy"), line_shapes.model_wavenumber
+        ):
+            msg = f"{path} has a different model grid; save it again"
+            raise ValueError(msg)
+
+        matrices = np.load(path / "matrices.npy", mmap_mode="r")
+        covariances = np.load(path / "covariances.npy", mmap_mode="r")
+        for row in range(cal_db.num_rows):
+            line_shapes._matrices[(row,)] = matrices[row]
+            line_shapes._covariances[row] = covariances[row]
+        return line_shapes
 
     def matrix(self, row) -> np.ndarray:
         """Line-shape matrix of one row, shape (num_samples, num_model).

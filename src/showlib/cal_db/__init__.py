@@ -5,6 +5,7 @@ The model is defined in the `model` section of src/showlib/schemas/cal_db.yaml.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -137,6 +138,24 @@ class CalibrationDatabase:
     @property
     def num_rows(self) -> int:
         return self._ds.sizes["los"]
+
+    def fingerprint(self) -> str:
+        """SHA-256 of the dataset's variables (names, dims, dtypes, values).
+
+        Attributes are left out, so re-saving or annotating the database keeps
+        its fingerprint; any change to its values does not.
+        """
+        digest = hashlib.sha256()
+        for name in sorted(self._ds.variables, key=str):
+            variable = self._ds.variables[name]
+            values = np.ascontiguousarray(variable.to_numpy())
+            digest.update(repr((str(name), variable.dims, values.shape)).encode())
+            if values.dtype.kind in "OUS":
+                digest.update(repr(values.tolist()).encode())
+            else:
+                digest.update(values.dtype.str.encode())
+                digest.update(values.tobytes())
+        return digest.hexdigest()
 
     @property
     def num_columns(self) -> int:

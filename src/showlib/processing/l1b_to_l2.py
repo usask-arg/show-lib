@@ -31,26 +31,40 @@ def retrieve_l2(
     cal_db: CalibrationDatabase,
     config: dict,
     process_slice=None,
+    line_shapes: SHOWLineShapes | None = None,
 ) -> list[L2Profile]:
     """Retrieve H2O for images of an in-memory L1B granule.
 
-    Builds the line shapes once for the granule. ``por`` is the program of record
-    (pressure, temperature and tropopause_altitude on altitude, along time, and
-    optionally aerosol_extinction); ``config`` comes from load_retrieval_config.
+    ``por`` is the program of record (pressure, temperature and
+    tropopause_altitude on altitude, along time, and optionally
+    aerosol_extinction); ``config`` comes from load_retrieval_config.
+
+    Without ``line_shapes`` they are built for the granule, which takes most of
+    a granule's time on a real calibration database. Pass ones loaded once with
+    SHOWLineShapes.load to reuse them; they are checked against ``cal_db``, the
+    L1B and the config first.
     """
-    line_shapes = SHOWLineShapes.from_l1b(
-        cal_db, l1b, model_res_cminv=config["model_res_cminv"]
-    )
+    if line_shapes is None:
+        line_shapes = SHOWLineShapes.from_l1b(
+            cal_db, l1b, model_res_cminv=config["model_res_cminv"]
+        )
+    else:
+        line_shapes.check_l1b(cal_db, l1b, config["model_res_cminv"])
     return process_l1b_to_l2(l1b, por, line_shapes, config, process_slice)
 
 
 def process_l1b_to_l2_file(
-    l1b_file: Path, output_folder: Path, cal_db_path: Path, config: dict
+    l1b_file: Path,
+    output_folder: Path,
+    cal_db_path: Path,
+    config: dict,
+    line_shapes: SHOWLineShapes | None = None,
 ):
     """Retrieve every image of an L1B granule; ``config`` from load_retrieval_config.
 
     The program of record and the output are found from the L1B's path (sibling
-    por/ and l2/ folders); retrieve_l2 does the same in memory.
+    por/ and l2/ folders); retrieve_l2 does the same in memory, and takes
+    ``line_shapes`` the same way.
     """
     # Load in the data
     cal_db = CalibrationDatabase.from_file(cal_db_path)
@@ -63,7 +77,9 @@ def process_l1b_to_l2_file(
     if not out_file.exists():
         logging.info("Processing %s to %s", l1b_file.stem, out_file.stem)
 
-        profiles = retrieve_l2(l1b_data, por_data, cal_db, config)
+        profiles = retrieve_l2(
+            l1b_data, por_data, cal_db, config, line_shapes=line_shapes
+        )
         L2DataSet.from_profiles(profiles).save(out_file)
 
 
