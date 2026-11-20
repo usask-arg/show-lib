@@ -335,3 +335,101 @@ def test_window_is_the_union_over_line_shapes():
     line_shapes[1, 0, 9] = 1e-4
     assert _window(line_shapes, 1e-3) == slice(2, 8)
     assert _window(line_shapes, 1e-5) == slice(2, 10)
+
+
+# ------------------------------------------------------------- saved files
+def test_saved_line_shapes_load_unchanged(make_cal_db, tmp_path):
+    cal_db = _non_ideal_cal_db(make_cal_db)
+    built = SHOWLineShapes(cal_db, apodization=10.0, model_res_cminv=0.05)
+    built.save(tmp_path / "line_shapes")
+
+    loaded = SHOWLineShapes.load(tmp_path / "line_shapes", cal_db)
+
+    assert loaded.apodization == 10.0
+    assert loaded.model_res_cminv == 0.05
+    np.testing.assert_array_equal(loaded.model_wavenumber, built.model_wavenumber)
+    for row in [0, 1, (0, 1)]:
+        np.testing.assert_array_equal(loaded.matrix(row), built.matrix(row))
+        np.testing.assert_array_equal(
+            loaded.noise_correlation(row), built.noise_correlation(row)
+        )
+    samples = cal_db.sample_wavenumber(0)[[1, 2]]
+    np.testing.assert_array_equal(
+        loaded.instrument_model([1, 0], samples, tolerance=1e-3).matrices,
+        built.instrument_model([1, 0], samples, tolerance=1e-3).matrices,
+    )
+
+
+def test_loaded_line_shapes_are_memory_mapped_not_rebuilt(
+    make_cal_db, tmp_path, monkeypatch
+):
+    cal_db = _non_ideal_cal_db(make_cal_db)
+    SHOWLineShapes(cal_db, apodization=None, model_res_cminv=0.05).save(
+        tmp_path / "line_shapes"
+    )
+
+    def fail(*args, **kwargs):
+        pytest.fail("rebuilt B")
+
+    monkeypatch.setattr(lineshape, "inverse_operator", fail)
+    loaded = SHOWLineShapes.load(tmp_path / "line_shapes", cal_db)
+
+    assert isinstance(loaded.matrix(0).base, np.memmap)
+    assert not loaded.matrix(0).flags.writeable
+    loaded.noise_correlation((0, 1))
+
+
+def test_saving_does_not_overwrite(make_cal_db, tmp_path):
+    line_shapes = SHOWLineShapes(
+        CalibrationDatabase(make_cal_db()), apodization=None, model_res_cminv=0.05
+    )
+    line_shapes.save(tmp_path / "line_shapes")
+
+    with pytest.raises(FileExistsError):
+        line_shapes.save(tmp_path / "line_shapes")
+
+
+def test_loading_rejects_a_different_calibration(make_cal_db, tmp_path):
+    ds = make_cal_db()
+    SHOWLineShapes(
+        CalibrationDatabase(ds), apodization=None, model_res_cminv=0.05
+    ).save(tmp_path / "line_shapes")
+    changed = ds.copy(deep=True)
+    changed["pixel_etendue"] = changed["pixel_etendue"] * 1.001
+
+    with pytest.raises(ValueError, match="calibration database"):
+        SHOWLineShapes.load(tmp_path / "line_shapes", CalibrationDatabase(changed))
+
+
+def test_fingerprint_follows_the_calibration_contents(make_cal_db):
+    ds = make_cal_db()
+    same = ds.copy(deep=True)
+    same.attrs["history"] = "re-saved"
+    changed = ds.copy(deep=True)
+    changed["pixel_etendue"] = changed["pixel_etendue"] * 1.001
+
+    fingerprint = CalibrationDatabase(ds).fingerprint()
+    assert CalibrationDatabase(same).fingerprint() == fingerprint
+    assert CalibrationDatabase(changed).fingerprint() != fingerprint
+
+
+def test_check_l1b_rejects_a_different_apodization_or_grid(make_cal_db):
+    cal_db = CalibrationDatabase(make_cal_db())
+    grid = np.linspace(7325.0, 7333.0, 200)
+    l1b = process_l1a_to_l1b(
+        _l1a_from_spectrum(cal_db, grid, np.full(grid.shape, 1e-3)),
+        cal_db,
+        apodization=4.0,
+    )
+    line_shapes = SHOWLineShapes(cal_db, apodization=4.0, model_res_cminv=0.05)
+    line_shapes.check_l1b(cal_db, l1b, model_res_cminv=0.05)
+
+    with pytest.raises(ValueError, match="apodization"):
+        SHOWLineShapes(cal_db, apodization=10.0, model_res_cminv=0.05).check_l1b(
+            cal_db, l1b, model_res_cminv=0.05
+        )
+    with pytest.raises(ValueError, match="model_res_cminv"):
+        line_shapes.check_l1b(cal_db, l1b, model_res_cminv=0.01)
+    other = CalibrationDatabase(make_cal_db(dark_offset=1.0))
+    with pytest.raises(ValueError, match="calibration database"):
+        line_shapes.check_l1b(other, l1b, model_res_cminv=0.05)
