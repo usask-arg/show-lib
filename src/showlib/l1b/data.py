@@ -14,7 +14,7 @@ from skretrieval.retrieval.observation import Observation
 from skretrieval.util import rotation_matrix
 
 from showlib.schemas import apply_metadata, check
-from showlib.util import wrap_degrees
+from showlib.util import circular_mean_degrees, wrap_degrees
 
 
 class L1bImage(Observation):
@@ -257,14 +257,15 @@ class L1bImage(Observation):
 
     def reference_longitude(self) -> dict[float]:
         """
-        The reference longitude for the observation
+        The reference longitude for the observation: the circular mean of the
+        tangent longitudes, in [-180, 180)
 
         Returns
         -------
         dict[float]
         """
         good_alt = self._retrieval_los_mask()
-        return {"meas": float(self._ds["tangent_longitude"][good_alt].mean())}
+        return {"meas": circular_mean_degrees(self._ds["tangent_longitude"][good_alt])}
 
     def append_information_to_l1(self, l1: dict[RadianceGridded], **kwargs) -> None:
         """

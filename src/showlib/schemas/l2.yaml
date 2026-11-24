@@ -135,8 +135,8 @@ variables:
     required: true
     role: geometry
     description: >
-      Reference longitude of the profile: the mean tangent longitude of the lines
-      of sight used in the retrieval.
+      Reference longitude of the profile: the circular mean tangent longitude of
+      the lines of sight used in the retrieval, in [-180, 180).
 
   # ------------------------------------------------------------------------ H2O
   h2o_vmr:

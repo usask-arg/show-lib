@@ -41,17 +41,20 @@ minimizer:
   method: trf
   xtol: 1.0e-15
   include_bounds: true
-  max_nfev: 20
-  ftol: 1.0e-6
+  max_nfev: 50
+  # Stop when the cost changes by less than 0.1%. At 1e-6 the H2O retrieval kept
+  # iterating to its evaluation limit after it reached the noise level, for H2O
+  # changes far inside the noise error.
+  ftol: 1.0e-3
 
 # Stage 1: fits aerosol at one sample with H2O held near its prior, and estimates
 # the lowest usable tangent altitude. If the POR has an aerosol_extinction
 # profile, the main retrieval's aerosol prior is that profile instead of this fit;
 # levels outside its altitude range take the floor (floor_fraction_of_peak).
 preprocessor:
-  # Required: a weakly H2O-absorbing sample wavenumber in the band, or "auto" to
-  # pick the in-band sample with the least H2O absorption (weakest_h2o_sample)
-  wavenumber_cminv: null
+  # A weakly H2O-absorbing sample wavenumber in the band, or "auto" to pick the
+  # in-band sample with the least H2O absorption (weakest_h2o_sample)
+  wavenumber_cminv: auto
   # The radiative transfer covers only the model grid that the sample's line
   # shape needs: all but this fraction of its absolute weight. null uses the
   # whole model grid.
@@ -125,7 +128,10 @@ retrieval:
           extinction_per_m: {type: testing}
     surface:
       lambertian_albedo:
-        prior_influence: 0
+        # Holds the albedo at its initial value to about 0.01. At 0 its level was
+        # unconstrained, which made the H2O noise error erratic (up to 10x, above
+        # the solution error).
+        prior_influence: 1.0e+4
         tikh_factor: 1.0e+6
         log_space: false
         initial_value: 0.3

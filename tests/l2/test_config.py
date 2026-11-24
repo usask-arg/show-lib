@@ -10,19 +10,35 @@ from showlib.l2.config import altitude_grid, engine_kwargs, load_retrieval_confi
 REQUIRED = {"preprocessor": {"wavenumber_cminv": 7335.165}}
 
 
-def test_preprocessor_wavenumber_is_required():
+def test_defaults_load_without_overrides():
+    assert load_retrieval_config()["preprocessor"]["wavenumber_cminv"] == "auto"
+
+
+def test_preprocessor_wavenumber_cannot_be_unset():
     with pytest.raises(ValueError, match=r"preprocessor\.wavenumber_cminv"):
-        load_retrieval_config()
+        load_retrieval_config({"preprocessor": {"wavenumber_cminv": None}})
 
 
 def test_defaults_are_the_previous_settings():
     config = load_retrieval_config(REQUIRED)
-    assert config["minimizer"]["max_nfev"] == 20
     assert config["observation"]["upper_bound_m"] == 30000
     h2o = "absorbers", "h2o", "tikh_factor"
     preprocessor_state = config["preprocessor"]["state"]
     assert preprocessor_state[h2o[0]][h2o[1]][h2o[2]] == 2.5e3
     assert config["retrieval"]["state"][h2o[0]][h2o[1]][h2o[2]] == 2.5e1
+
+
+def test_minimizer_stops_at_a_small_relative_change_in_cost():
+    minimizer = load_retrieval_config()["minimizer"]
+    assert minimizer["ftol"] == 1e-3
+    assert minimizer["max_nfev"] == 50
+
+
+def test_surface_albedo_is_held_near_its_prior():
+    albedo = load_retrieval_config()["retrieval"]["state"]["surface"][
+        "lambertian_albedo"
+    ]
+    assert albedo["prior_influence"] == 1e4
 
 
 def test_noise_correlation_is_on_by_default():
@@ -65,7 +81,7 @@ def test_state_sections_accept_new_keys():
 
 def test_loading_does_not_modify_the_defaults():
     load_retrieval_config({**REQUIRED, "minimizer": {"max_nfev": 50}})
-    assert load_retrieval_config(REQUIRED)["minimizer"]["max_nfev"] == 20
+    assert load_retrieval_config(REQUIRED)["minimizer"]["max_nfev"] == 50
 
 
 def test_loads_a_yaml_file(tmp_path):

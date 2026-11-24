@@ -7,6 +7,7 @@ import xarray as xr
 
 from showlib.por.l2.merra import MERRA2
 from showlib.timeutil import datetime64_to_datetime
+from showlib.util import circular_mean_degrees
 
 ALT_GRID = np.arange(0, 100001, 250)
 
@@ -42,7 +43,7 @@ def l2_por_merra(l1b_granule: Path, out_folder: Path, merra2_folder: Path):
             lat_min = float(selected["tangent_latitude"].min())
             lat_max = float(selected["tangent_latitude"].max())
 
-            lon = (float(selected["tangent_longitude"].mean()) + 180) % 360 - 180
+            lon = circular_mean_degrees(selected["tangent_longitude"])
 
             merra_min = merra2.calculate_parameters(
                 datetime64_to_datetime(selected["time"].to_numpy()),
