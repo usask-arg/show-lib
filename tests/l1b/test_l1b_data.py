@@ -134,6 +134,11 @@ def test_reference_values():
     assert image.reference_cos_sza()["meas"] == pytest.approx(0.5)
 
 
+def test_reference_longitude_across_the_antimeridian():
+    image = _l1b_image(tangent_longitude=np.array([179.0, 179.5, -179.5, -179, -178]))
+    assert image.reference_longitude()["meas"] == pytest.approx(-179.6)
+
+
 def test_sample_wavelengths():
     wavelengths = _l1b_image().sample_wavelengths()["meas"]
     np.testing.assert_allclose(wavelengths, 1e7 / WAVENUMBER)

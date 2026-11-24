@@ -10,4 +10,5 @@ Research and development libraries developed at the University of Saskatchewan f
 :maxdepth: 2
 
 formats/index
+changelog
 ```

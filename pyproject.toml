@@ -15,8 +15,8 @@ dependencies = [
     "pyyaml",
     "sasktran2[hapi]",
     "scipy",
-    "skretrieval>=2026.10.0",
-    "xarray",
+    "skretrieval>=2026.11.0",
+    "xarray>=2024.10",
 ]
 authors = [
     { name = "usask-arg developers" },
