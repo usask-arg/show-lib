@@ -38,6 +38,9 @@ plotting = ["matplotlib"]
 dev = ["pytest>=8", "pre-commit", "ruff"]
 docs = ["sphinx", "myst-nb", "sphinx-book-theme", "sphinx-design"]
 
+[tool.setuptools.package-data]
+showlib = ["data/*.yml", "l2/*.yaml", "schemas/*.yaml"]
+
 [tool.setuptools_scm]
 version_file = "src/showlib/_version.py"
 
